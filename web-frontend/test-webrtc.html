@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebRTC测试 - 无STUN纯本地连接</title>
+    <style>
+        body { font-family: Arial; padding: 20px; }
+        video { width: 640px; height: 480px; background: #000; border: 2px solid #333; }
+        button { margin: 10px; padding: 10px 20px; font-size: 16px; }
+        #status { margin: 20px 0; padding: 10px; background: #f0f0f0; }
+        .log { margin: 5px 0; font-family: monospace; font-size: 12px; }
+        .error { color: red; }
+        .success { color: green; }
+    </style>
+</head>
+<body>
+    <h1>WebRTC 测试页面 - 纯本地连接</h1>
+
+    <div>
+        <button onclick="connect()">1. 连接信令服务器</button>
+        <button onclick="requestOffer()">2. 请求视频流</button>
+        <button onclick="disconnect()">断开连接</button>
+    </div>
+
+    <video id="remoteVideo" autoplay muted playsinline></video>
+
+    <div id="status">
+        <h3>连接状态</h3>
+        <div id="logs"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        let pc = null;
+        let clientId = null;
+
+        function log(message, isError = false) {
+            const logs = document.getElementById('logs');
+            const div = document.createElement('div');
+            div.className = 'log' + (isError ? ' error' : '');
+            div.textContent = new Date().toLocaleTimeString() + ' - ' + message;
+            logs.appendChild(div);
+
+            // 不限制日志数量，显示全部
+            // while (logs.children.length > 10) {
+            //     logs.removeChild(logs.firstChild);
+            // }
+            logs.scrollTop = logs.scrollHeight;
+            console.log(message);
+        }
+
+        function connect() {
+            log('正在连接信令服务器 ws://localhost:8083 ...');
+
+            ws = new WebSocket('ws://localhost:8083');
+
+            ws.onopen = () => {
+                log('✅ WebSocket连接成功，发送认证消息', false);
+                ws.send(JSON.stringify({
+                    type: 'auth',
+                    data: {
+                        client_type: 'web_client',
+                        client_id: 'test_' + Date.now()
+                    }
+                }));
+            };
+
+            ws.onmessage = async (event) => {
+                const message = JSON.parse(event.data);
+                // 只记录重要消息，忽略ICE候选和分析结果
+                if (message.type !== 'ice_candidate' && message.type !== 'analysis_result') {
+                    log('收到消息: ' + message.type);
+                }
+
+                switch(message.type) {
+                    case 'auth_success':
+                        clientId = message.client_id;
+                        log('✅ 认证成功，客户端ID: ' + clientId, false);
+                        break;
+
+                    case 'offer':
+                        log('📥 收到Offer，创建Answer...');
+                        await handleOffer(message.data);
+                        break;
+
+                    case 'ice_candidate':
+                        // 不记录每个ICE候选
+                        await handleIceCandidate(message.data);
+                        break;
+                }
+            };
+
+            ws.onerror = (error) => {
+                log('❌ WebSocket错误: ' + error, true);
+            };
+
+            ws.onclose = () => {
+                log('WebSocket连接已关闭');
+            };
+        }
+
+        function requestOffer() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ 请先连接信令服务器', true);
+                return;
+            }
+
+            // 创建PeerConnection - 纯本地连接，不使用STUN/TURN
+            const config = {
+                iceServers: [],  // 空数组，只使用本地候选
+                iceCandidatePoolSize: 0  // 不预先收集候选
+            };
+
+            pc = new RTCPeerConnection(config);
+            log('✅ 创建PeerConnection (纯本地连接，无STUN)');
+
+            pc.ontrack = (event) => {
+                log('📺 收到远程视频轨道');
+                const video = document.getElementById('remoteVideo');
+                video.srcObject = event.streams[0];
+                log('✅ 视频流已设置到video元素', false);
+            };
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    // 不记录每个ICE候选，太多了
+                    // log('发送本地ICE候选: ' + event.candidate.candidate);
+                    ws.send(JSON.stringify({
+                        type: 'ice_candidate',
+                        data: {
+                            candidate: event.candidate.candidate,
+                            sdpMid: event.candidate.sdpMid,
+                            sdpMLineIndex: event.candidate.sdpMLineIndex
+                        }
+                    }));
+                }
+            };
+
+            pc.onconnectionstatechange = () => {
+                log('连接状态: ' + pc.connectionState);
+                if (pc.connectionState === 'connected') {
+                    log('✅✅✅ WebRTC连接成功建立！', false);
+                }
+            };
+
+            pc.oniceconnectionstatechange = () => {
+                log('ICE连接状态: ' + pc.iceConnectionState);
+            };
+
+            // 发送请求
+            log('📤 发送request_offer消息');
+            ws.send(JSON.stringify({
+                type: 'request_offer',
+                timestamp: Date.now()
+            }));
+        }
+
+        async function handleOffer(offerData) {
+            if (!pc) {
+                log('❌ PeerConnection未创建', true);
+                return;
+            }
+
+            try {
+                log('设置远程描述(Offer)...');
+                await pc.setRemoteDescription(new RTCSessionDescription({
+                    type: 'offer',
+                    sdp: offerData.sdp
+                }));
+
+                log('创建Answer...');
+                const answer = await pc.createAnswer();
+
+                // 修改SDP以确保能接收视频
+                answer.sdp = answer.sdp.replace(/a=inactive/g, 'a=recvonly');
+
+                log('设置本地描述(Answer)...');
+                await pc.setLocalDescription(answer);
+
+                log('📤 发送Answer到服务器');
+                ws.send(JSON.stringify({
+                    type: 'answer',
+                    data: {
+                        type: 'answer',
+                        sdp: answer.sdp
+                    }
+                }));
+
+                log('✅ Answer已发送', false);
+            } catch (error) {
+                log('❌ 处理Offer失败: ' + error, true);
+            }
+        }
+
+        async function handleIceCandidate(candidateData) {
+            if (!pc) return;
+
+            try {
+                await pc.addIceCandidate(new RTCIceCandidate({
+                    candidate: candidateData.candidate,
+                    sdpMid: candidateData.sdpMid,
+                    sdpMLineIndex: candidateData.sdpMLineIndex
+                }));
+                // 不记录每个ICE候选添加
+            } catch (error) {
+                log('⚠️ 添加ICE候选失败: ' + error, true);
+            }
+        }
+
+        function disconnect() {
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            log('已断开所有连接');
+        }
+    </script>
+</body>
+</html>
