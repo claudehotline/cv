@@ -190,7 +190,8 @@ bool WebRTCStreamer::CreateOffer(const std::string& client_id, std::string& sdp_
         {
             std::lock_guard<std::mutex> lock(clients_mutex_);
 
-            // 保留旧客户端的requested_source（如果存在）
+            // 保留旧客户端的requested_source（如果存在，用于重连场景）
+            // 注意：首次连接时，默认值会被main.cpp中的setWebRTCClientSource覆盖
             std::string preserved_source = "camera_01";  // 默认值
             auto existing_client_it = clients_.find(client_id);
             if (existing_client_it != clients_.end()) {

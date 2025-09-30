@@ -68,6 +68,8 @@ export class WebRTCClient {
       this.signalingSocket = null
     }
 
+    this.dataChannelReady = false
+
     this.onDisconnected?.()
   }
 

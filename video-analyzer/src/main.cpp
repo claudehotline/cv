@@ -102,7 +102,7 @@ int main(int argc, char* argv[]) {
 
                 // 尝试设置源，如果客户端不存在则忽略（可能客户端还在建立连接中）
                 if (!analyzer.setWebRTCClientSource(client_id, requested_source)) {
-                    std::cout << "⚠️ 客户端 " << client_id << " 还未建立连接，等待连接建立后将使用默认源" << std::endl;
+                    std::cout << "⚠️ 客户端 " << client_id << " 不存在，无法切换视频源" << std::endl;
                 }
             } else {
                 std::cerr << "switch_source message missing source_id" << std::endl;

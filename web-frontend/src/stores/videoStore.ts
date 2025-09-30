@@ -317,12 +317,11 @@ export const useVideoStore = defineStore('video', () => {
   }
 
   const requestVideoStream = () => {
-    console.log('🎬 请求视频流 - webrtcClient:', !!webrtcClient.value, 'selectedSourceId:', selectedSourceId.value)
+    console.log('🎬 requestVideoStream被调用, selectedSourceId:', selectedSourceId.value)
     if (webrtcClient.value && selectedSourceId.value) {
-      console.log('✅ 条件满足，发送request_offer')
-      webrtcClient.value.requestVideoStream()
+      webrtcClient.value.requestVideoStream(selectedSourceId.value)
     } else {
-      console.log('❌ 条件不满足 - webrtcClient存在:', !!webrtcClient.value, 'selectedSourceId存在:', !!selectedSourceId.value)
+      console.warn('⚠️ 无法请求视频流 - webrtcClient:', !!webrtcClient.value, 'selectedSourceId:', selectedSourceId.value)
     }
   }
 
