@@ -27,7 +27,7 @@ export const useVideoStore = defineStore('video', () => {
   // 模型相关状态
   const availableModels = ref<ModelInfo[]>([])
   const selectedModelId = ref<string>('')
-  const isAnalyzing = ref(false)
+  const isAnalyzing = ref(true)
 
   const wsConnection = ref<WebSocket | null>(null)
   const connectionStatus = ref<'connecting' | 'connected' | 'disconnected'>('disconnected')
@@ -152,15 +152,92 @@ export const useVideoStore = defineStore('video', () => {
   }
 
   const startAnalysis = async (sourceId: string, analysisType: string) => {
-    console.log('开始分析:', sourceId, analysisType)
-    isAnalyzing.value = true
-    // 简化实现：直接通过WebRTC请求视频流
-    requestVideoStream()
+    console.log('开始分析:', sourceId, analysisType, 'model_id:', selectedModelId.value)
+
+    try {
+      // 确保有选中的模型ID
+      if (!selectedModelId.value) {
+        throw new Error('请先选择一个模型')
+      }
+
+      // 通过HTTP API发送启用检测框绘制的请求
+      const response = await fetch('/api/analyzer/analysis/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          source_id: sourceId,
+          model_id: selectedModelId.value,
+          analysis_type: analysisType
+        })
+      })
+
+      console.log('API响应状态:', response.status, response.statusText)
+
+      // 检查响应是否为空
+      const text = await response.text()
+      console.log('API响应内容:', text)
+
+      if (!text) {
+        throw new Error('服务器返回空响应')
+      }
+
+      const data = JSON.parse(text)
+      if (data.success) {
+        isAnalyzing.value = true
+        console.log('✅ 启用分析成功')
+        // 如果WebRTC未连接，请求视频流
+        if (!webrtcConnected.value) {
+          requestVideoStream()
+        }
+      } else {
+        console.error('❌ 启用分析失败:', data.message)
+        throw new Error(data.message || '启用分析失败')
+      }
+    } catch (error) {
+      console.error('❌ 启用分析请求失败:', error)
+      throw error
+    }
   }
 
   const stopAnalysis = async (sourceId: string) => {
     console.log('停止分析:', sourceId)
-    isAnalyzing.value = false
+
+    try {
+      // 通过HTTP API发送禁用检测框绘制的请求
+      const response = await fetch('/api/analyzer/analysis/stop', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          source_id: sourceId
+        })
+      })
+
+      console.log('API响应状态:', response.status, response.statusText)
+
+      // 检查响应是否为空
+      const text = await response.text()
+      console.log('API响应内容:', text)
+
+      if (!text) {
+        throw new Error('服务器返回空响应')
+      }
+
+      const data = JSON.parse(text)
+      if (data.success) {
+        isAnalyzing.value = false
+        console.log('✅ 停止分析成功')
+      } else {
+        console.error('❌ 停止分析失败:', data.message)
+        throw new Error(data.message || '停止分析失败')
+      }
+    } catch (error) {
+      console.error('❌ 停止分析请求失败:', error)
+      throw error
+    }
   }
 
   const setSelectedSource = (sourceId: string) => {

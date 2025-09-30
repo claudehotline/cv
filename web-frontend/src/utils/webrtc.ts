@@ -113,6 +113,19 @@ export class WebRTCClient {
     }
   }
 
+  sendControlMessage(controlData: any): void {
+    if (this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN) {
+      const message = {
+        ...controlData,
+        timestamp: Date.now()
+      }
+      console.log('📤 发送控制消息:', message)
+      this.signalingSocket.send(JSON.stringify(message))
+    } else {
+      console.warn('⚠️ WebSocket未连接，无法发送控制消息')
+    }
+  }
+
   private async connectSignalingServer(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.signalingSocket = new WebSocket(this.config.signalingServerUrl)
@@ -260,32 +273,31 @@ export class WebRTCClient {
           this.remoteVideo.autoplay = true
           this.remoteVideo.playsInline = true
 
-          // 等待一帧后再设置新流
-          requestAnimationFrame(() => {
-            this.remoteVideo.srcObject = stream
+          // 直接设置srcObject，不等待requestAnimationFrame
+          this.remoteVideo.srcObject = stream
 
-            // 等待loadedmetadata事件后再播放
-            this.remoteVideo.onloadedmetadata = () => {
-              console.log('📹 视频元数据已加载')
-              this.remoteVideo.play().then(() => {
-                console.log('▶️ 视频播放成功')
-                console.log('📹 播放后状态:', {
-                  videoWidth: this.remoteVideo.videoWidth,
-                  videoHeight: this.remoteVideo.videoHeight,
-                  readyState: this.remoteVideo.readyState,
-                  networkState: this.remoteVideo.networkState
-                })
-              }).catch((err) => {
-                console.error('❌ 视频播放失败:', err)
-                // 尝试用户交互后播放
-                console.log('📱 尝试静音播放...')
-                this.remoteVideo.muted = true
-                this.remoteVideo.play().catch(e => {
-                  console.error('❌ 静音播放也失败:', e)
-                })
+          // 使用更快的canplay事件代替loadedmetadata
+          const playVideo = () => {
+            console.log('📹 视频准备就绪，开始播放')
+            this.remoteVideo.play().then(() => {
+              console.log('▶️ 视频播放成功')
+            }).catch((err) => {
+              console.error('❌ 视频播放失败:', err)
+              // 尝试静音播放
+              this.remoteVideo.muted = true
+              this.remoteVideo.play().catch(e => {
+                console.error('❌ 静音播放也失败:', e)
               })
-            }
-          })
+            })
+          }
+
+          // 监听canplay事件以更快开始播放
+          this.remoteVideo.oncanplay = playVideo
+
+          // 如果readyState已经>=HAVE_FUTURE_DATA，立即播放
+          if (this.remoteVideo.readyState >= 3) {
+            playVideo()
+          }
         } else {
           console.warn('⚠️ 视频元素未设置，流已保存等待设置')
         }

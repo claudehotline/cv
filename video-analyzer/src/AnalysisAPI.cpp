@@ -161,9 +161,20 @@ HTTPServer::Response AnalysisAPI::stopAnalysis(const HTTPServer::Request& req) {
     try {
         Json::Value json_body = HTTPServer::parseJsonBody(req.body);
         std::string task_id = json_body.get("task_id", "").asString();
-        if (task_id.empty()) return HTTPServer::errorResponse("缺少任务ID", 400);
+        std::string source_id = json_body.get("source_id", "").asString();
+
+        // 支持通过task_id或source_id来停止分析
+        if (task_id.empty() && source_id.empty()) {
+            return HTTPServer::errorResponse("缺少任务ID或源ID", 400);
+        }
+
         if (video_analyzer_) video_analyzer_->setAnalysisEnabled(false);
-        Json::Value result; result["task_id"] = task_id; result["status"] = "stopped"; result["message"] = "分析任务已停止";
+
+        Json::Value result;
+        if (!task_id.empty()) result["task_id"] = task_id;
+        if (!source_id.empty()) result["source_id"] = source_id;
+        result["status"] = "stopped";
+        result["message"] = "分析任务已停止";
         return HTTPServer::jsonResponse(createSuccessResponse(result));
     } catch (const std::exception& e) { return HTTPServer::errorResponse(std::string("停止分析失败: ") + e.what(), 500); }
 }
