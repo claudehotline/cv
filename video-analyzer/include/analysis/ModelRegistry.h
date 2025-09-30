@@ -19,6 +19,10 @@ struct ModelDesc {
     std::string framework;    // e.g. "onnx", "tensorrt" (optional)
     AnalysisType task { AnalysisType::OBJECT_DETECTION };
     InferenceConfig inference_config;  // GPU/CPU configuration
+    float confidence_threshold {0.0f};
+    float nms_threshold {0.0f};
+    int input_width {0};
+    int input_height {0};
 };
 
 class ModelRegistry {

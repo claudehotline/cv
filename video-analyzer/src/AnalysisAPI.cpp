@@ -64,27 +64,30 @@ void AnalysisAPI::setupRoutes() {
 HTTPServer::Response AnalysisAPI::getModels(const HTTPServer::Request&) {
     Json::Value result(Json::arrayValue);
 
-    Json::Value model1;
-    model1["id"] = "yolov12x";
-    model1["name"] = "YOLOv12x Object Detection";
-    model1["type"] = "object_detection";
-    model1["status"] = "loaded";
-    model1["format"] = "onnx";
-    model1["accuracy"] = 0.92;
-    model1["inference_time_ms"] = 55;
-    model1["description"] = "最新的YOLOv12超大型模型，检测精度最高";
-    result.append(model1);
+    if (video_analyzer_) {
+        const auto& models = video_analyzer_->getDetectionModels();
+        const std::string current_id = video_analyzer_->getCurrentDetectionModelId();
 
-    Json::Value model2;
-    model2["id"] = "yolov12l";
-    model2["name"] = "YOLOv12l Object Detection";
-    model2["type"] = "object_detection";
-    model2["status"] = "available";
-    model2["format"] = "onnx";
-    model2["accuracy"] = 0.90;
-    model2["inference_time_ms"] = 40;
-    model2["description"] = "YOLOv12大型模型，速度与精度平衡";
-    result.append(model2);
+        for (const auto& model : models) {
+            Json::Value entry;
+            entry["id"] = model.id;
+            entry["name"] = model.name.empty() ? model.id : model.name;
+            entry["type"] = "object_detection";
+            entry["status"] = (model.id == current_id) ? "loaded" : "available";
+            entry["format"] = model.type.empty() ? "onnx" : model.type;
+            entry["confidence_threshold"] = model.confidence_threshold;
+            entry["nms_threshold"] = model.nms_threshold;
+
+            Json::Value input_size(Json::arrayValue);
+            if (model.input_width > 0 && model.input_height > 0) {
+                input_size.append(model.input_width);
+                input_size.append(model.input_height);
+            }
+            entry["input_size"] = input_size;
+
+            result.append(entry);
+        }
+    }
 
     return HTTPServer::jsonResponse(createSuccessResponse(result));
 }
@@ -93,7 +96,17 @@ HTTPServer::Response AnalysisAPI::loadModel(const HTTPServer::Request& req) {
     try {
         Json::Value json_body = HTTPServer::parseJsonBody(req.body);
         std::string model_id = json_body.get("model_id", "").asString();
+        std::string analysis_type = json_body.get("analysis_type", "object_detection").asString();
         if (model_id.empty()) return HTTPServer::errorResponse("缺少模型ID", 400);
+
+        AnalysisType at = (analysis_type == "instance_segmentation") ? AnalysisType::INSTANCE_SEGMENTATION : AnalysisType::OBJECT_DETECTION;
+
+        // 切换到指定模型
+        if (video_analyzer_) {
+            if (!video_analyzer_->setCurrentModel(model_id, at)) {
+                return HTTPServer::errorResponse("模型切换失败: " + model_id, 500);
+            }
+        }
 
         Json::Value result;
         result["model_id"] = model_id;
@@ -134,15 +147,10 @@ HTTPServer::Response AnalysisAPI::startAnalysis(const HTTPServer::Request& req) 
         std::string source_id = json_body.get("source_id", "").asString();
         std::string model_id = json_body.get("model_id", "").asString();
         std::string analysis_type = json_body.get("analysis_type", "object_detection").asString();
-        if (source_id.empty() || model_id.empty()) return HTTPServer::errorResponse("缺少必要参数", 400);
+        if (source_id.empty()) return HTTPServer::errorResponse("缺少必要参数: source_id", 400);
 
-        AnalysisType at = (analysis_type == "instance_segmentation") ? AnalysisType::INSTANCE_SEGMENTATION : AnalysisType::OBJECT_DETECTION;
+        // 只启用分析，不切换模型（模型切换应该通过 loadModel 接口进行）
         if (video_analyzer_) {
-            // 尝试切换到指定模型，如果失败则使用当前已加载的模型
-            if (!video_analyzer_->setCurrentModel(model_id, at)) {
-                std::cerr << "⚠️ 模型切换失败: " << model_id << "，使用当前已加载的模型" << std::endl;
-                // 不返回错误，直接启用分析
-            }
             video_analyzer_->setAnalysisEnabled(true);
         }
 
@@ -286,4 +294,3 @@ Json::Value AnalysisAPI::createSuccessResponse(const Json::Value& data) {
 Json::Value AnalysisAPI::createErrorResponse(const std::string& message) {
     Json::Value response; response["success"] = false; response["message"] = message; response["timestamp"] = static_cast<int64_t>(time(nullptr)); return response;
 }
-

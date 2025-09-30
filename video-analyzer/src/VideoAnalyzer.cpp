@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <fstream>
 #include <iostream>
 #include <numeric>
@@ -27,18 +28,29 @@ VideoAnalyzer::~VideoAnalyzer() { stop(); stopWebRTCStreaming(); stopRTSPProcess
 bool VideoAnalyzer::initialize(const std::string& config_file) {
     if (!loadConfig(config_file)) return false;
 
+    std::string default_detection_id;
+    {
+        std::shared_lock<std::shared_mutex> lock(model_mutex_);
+        default_detection_id = current_detection_model_id_;
+    }
+
+    bool detection_loaded = false;
+    if (!default_detection_id.empty()) {
+        detection_loaded = setCurrentModel(default_detection_id, AnalysisType::OBJECT_DETECTION);
+    }
+
     // Prepare default models
     std::string det_path = model_path_mapping_.count("default_detection") ? model_path_mapping_["default_detection"] : std::string();
     std::string seg_path = model_path_mapping_.count("default_segmentation") ? model_path_mapping_["default_segmentation"] : std::string();
-    
 
     // Registry-based creation (OCP): prefer family-specific creators, fallback to default (registered by adapters)
-    if (!det_path.empty()) {
+    if (!detection_loaded && !det_path.empty()) {
         ModelDesc desc; desc.path = det_path; desc.id = det_path; desc.task = AnalysisType::OBJECT_DETECTION;
         if (det_path.find("yolov12") != std::string::npos) desc.family = "yolov12";
         else if (det_path.find("yolo") != std::string::npos) desc.family = "yolo";
         desc.inference_config = inference_config_;  // Apply GPU/CPU configuration
         detection_model_ = ModelRegistry::instance().createDetector(desc);
+        detection_loaded = detection_model_ != nullptr;
     }
     if (!detection_model_) {
     }
@@ -162,24 +174,88 @@ void VideoAnalyzer::setAnalysisEnabled(bool enabled) { analysis_enabled_ = enabl
 bool VideoAnalyzer::isAnalysisEnabled() const { return analysis_enabled_.load(); }
 
 bool VideoAnalyzer::setCurrentModel(const std::string& model_id, AnalysisType type) {
-    std::string path;
-    if (model_path_mapping_.count(model_id)) path = model_path_mapping_[model_id];
-    if (path.empty()) return false;
+    ModelConfig selected_model;
+    {
+        std::shared_lock<std::shared_mutex> lock(model_mutex_);
+        auto it = std::find_if(detection_models_.begin(), detection_models_.end(),
+            [&model_id](const ModelConfig& cfg){ return cfg.id == model_id; });
+        if (it != detection_models_.end()) {
+            selected_model = *it;
+        } else {
+            auto path_it = model_path_mapping_.find(model_id);
+            if (path_it != model_path_mapping_.end()) {
+                selected_model.id = model_id;
+                selected_model.path = path_it->second;
+            }
+        }
+    }
 
+    if (selected_model.path.empty()) {
+        return false;
+    }
+
+    bool loaded = false;
     if (type == AnalysisType::OBJECT_DETECTION) {
-        ModelDesc desc; desc.id = model_id; desc.path = path; desc.task = AnalysisType::OBJECT_DETECTION;
-        if (path.find("yolov12") != std::string::npos) desc.family = "yolov12";
-        else if (path.find("yolo") != std::string::npos) desc.family = "yolo";
-        auto m = ModelRegistry::instance().createDetector(desc);
-        if (!m) return false;
-        detection_model_ = std::move(m);
-        return true;
+        ModelDesc desc;
+        desc.id = model_id;
+        desc.path = selected_model.path;
+        desc.task = AnalysisType::OBJECT_DETECTION;
+        std::string lower_path = desc.path;
+        std::transform(lower_path.begin(), lower_path.end(), lower_path.begin(),
+                       [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+        if (lower_path.find("yolov12") != std::string::npos) {
+            desc.family = "yolov12";
+        } else if (lower_path.find("yolo") != std::string::npos) {
+            desc.family = "yolo";
+        }
+        desc.inference_config = inference_config_;
+        desc.framework = selected_model.type.empty() ? "onnx" : selected_model.type;
+        desc.confidence_threshold = selected_model.confidence_threshold;
+        desc.nms_threshold = selected_model.nms_threshold;
+        desc.input_width = selected_model.input_width;
+        desc.input_height = selected_model.input_height;
+
+        auto model = ModelRegistry::instance().createDetector(desc);
+        if (!model) {
+            return false;
+        }
+        detection_model_ = std::move(model);
+        loaded = true;
+        std::cout << "Detection model loaded: " << model_id
+                  << " (device: " << OnnxRuntimeBackend::deviceToString(inference_config_.device) << ")" << std::endl;
     } else if (type == AnalysisType::INSTANCE_SEGMENTATION) {
-        ModelDesc desc; desc.id = model_id; desc.path = path; desc.task = AnalysisType::INSTANCE_SEGMENTATION;
-        if (path.find("yolo") != std::string::npos) desc.family = "yolo-seg";
-        auto m = ModelRegistry::instance().createSegmenter(desc);
-        if (!m) return false;
-        segmentation_model_ = std::move(m);
+        ModelDesc desc;
+        desc.id = model_id;
+        desc.path = selected_model.path;
+        desc.task = AnalysisType::INSTANCE_SEGMENTATION;
+        std::string lower_path = desc.path;
+        std::transform(lower_path.begin(), lower_path.end(), lower_path.begin(),
+                       [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+        if (lower_path.find("yolo") != std::string::npos) {
+            desc.family = "yolo-seg";
+        }
+        desc.inference_config = inference_config_;
+        desc.framework = selected_model.type.empty() ? "onnx" : selected_model.type;
+        desc.confidence_threshold = selected_model.confidence_threshold;
+        desc.nms_threshold = selected_model.nms_threshold;
+        desc.input_width = selected_model.input_width;
+        desc.input_height = selected_model.input_height;
+
+        auto model = ModelRegistry::instance().createSegmenter(desc);
+        if (!model) {
+            return false;
+        }
+        segmentation_model_ = std::move(model);
+        loaded = true;
+        std::cout << "Segmentation model loaded: " << model_id
+                  << " (device: " << OnnxRuntimeBackend::deviceToString(inference_config_.device) << ")" << std::endl;
+    }
+
+    if (loaded) {
+        std::unique_lock<std::shared_mutex> lock(model_mutex_);
+        if (type == AnalysisType::OBJECT_DETECTION) {
+            current_detection_model_id_ = model_id;
+        }
         return true;
     }
     return false;
@@ -243,19 +319,113 @@ bool VideoAnalyzer::loadConfig(const std::string& config_file) {
     try {
         std::ifstream f(config_file); if (!f.is_open()) { std::cerr << "Cannot open config: " << config_file << std::endl; return false; }
         Json::Value root; Json::CharReaderBuilder b; std::string errs; if (!Json::parseFromStream(b, f, &root, &errs)) { std::cerr << "JSON parse error: " << errs << std::endl; return false; }
+
+        // Reset model caches
+        {
+            std::unique_lock<std::shared_mutex> lock(model_mutex_);
+            model_path_mapping_.clear();
+            detection_models_.clear();
+            current_detection_model_id_.clear();
+        }
+
+        std::vector<ModelConfig> parsed_detection_models;
+        std::string default_detection_id;
+
         num_workers_ = root.get("num_workers", 2).asInt();
         webrtc_enabled_ = root.get("webrtc_enabled", false).asBool(); if (webrtc_enabled_) { int port = root.get("webrtc_port", 8080).asInt(); startWebRTCStreaming(port); }
 
         if (root.isMember("models") && root["models"].isObject()) {
             const auto& models = root["models"];
-            if (models.isMember("detection") && models["detection"].isObject()) {
-                const auto& det = models["detection"]; std::string p = det.get("path", "").asString(); if (!p.empty()) model_path_mapping_["default_detection"] = p;
+
+            // 支持新格式：detection 和 segmentation 为数组
+            if (models.isMember("detection")) {
+                if (models["detection"].isArray()) {
+                    // 新格式：数组，包含多个模型
+                    const auto& det_array = models["detection"];
+                    for (const auto& model : det_array) {
+                        std::string model_id = model.get("model", "").asString();
+                        std::string path = model.get("path", "").asString();
+                        if (model_id.empty() || path.empty()) {
+                            continue;
+                        }
+
+                        ModelConfig cfg;
+                        cfg.id = model_id;
+                        cfg.name = model.get("name", model_id).asString();
+                        cfg.type = model.get("type", "onnx").asString();
+                        cfg.path = path;
+                        cfg.confidence_threshold = model.get("confidence_threshold", 0.0).asFloat();
+                        cfg.nms_threshold = model.get("nms_threshold", 0.0).asFloat();
+                        if (model.isMember("input_size") && model["input_size"].isArray() && model["input_size"].size() >= 2) {
+                            cfg.input_width = model["input_size"][0].asInt();
+                            cfg.input_height = model["input_size"][1].asInt();
+                        }
+
+                        model_path_mapping_[model_id] = path;
+                        parsed_detection_models.emplace_back(std::move(cfg));
+                    }
+                    if (!parsed_detection_models.empty()) {
+                        model_path_mapping_["default_detection"] = parsed_detection_models.front().path;
+                        default_detection_id = parsed_detection_models.front().id;
+                    }
+                } else if (models["detection"].isObject()) {
+                    // 旧格式：单个对象
+                    const auto& det = models["detection"];
+                    std::string p = det.get("path", "").asString();
+                    if (!p.empty()) {
+                        model_path_mapping_["default_detection"] = p;
+
+                        ModelConfig cfg;
+                        cfg.id = det.get("model", "default_detection").asString();
+                        if (cfg.id.empty()) cfg.id = "default_detection";
+                        cfg.name = det.get("name", cfg.id).asString();
+                        cfg.type = det.get("type", "onnx").asString();
+                        cfg.path = p;
+                        cfg.confidence_threshold = det.get("confidence_threshold", 0.0).asFloat();
+                        cfg.nms_threshold = det.get("nms_threshold", 0.0).asFloat();
+                        if (det.isMember("input_size") && det["input_size"].isArray() && det["input_size"].size() >= 2) {
+                            cfg.input_width = det["input_size"][0].asInt();
+                            cfg.input_height = det["input_size"][1].asInt();
+                        }
+                        model_path_mapping_[cfg.id] = p;
+                        parsed_detection_models.emplace_back(std::move(cfg));
+                        default_detection_id = parsed_detection_models.front().id;
+                    }
+                }
             }
-            if (models.isMember("segmentation") && models["segmentation"].isObject()) {
-                const auto& seg = models["segmentation"]; std::string p = seg.get("path", "").asString(); if (!p.empty()) model_path_mapping_["default_segmentation"] = p;
+
+            if (models.isMember("segmentation")) {
+                if (models["segmentation"].isArray()) {
+                    // 新格式：数组，包含多个模型
+                    const auto& seg_array = models["segmentation"];
+                    for (const auto& model : seg_array) {
+                        std::string model_id = model.get("model", "").asString();
+                        std::string path = model.get("path", "").asString();
+                        if (!model_id.empty() && !path.empty()) {
+                            model_path_mapping_[model_id] = path;
+                        }
+                    }
+                    // 设置第一个为默认模型
+                    if (seg_array.size() > 0 && seg_array[0].isMember("path")) {
+                        model_path_mapping_["default_segmentation"] = seg_array[0].get("path", "").asString();
+                    }
+                } else if (models["segmentation"].isObject()) {
+                    // 旧格式：单个对象
+                    const auto& seg = models["segmentation"];
+                    std::string p = seg.get("path", "").asString();
+                    if (!p.empty()) model_path_mapping_["default_segmentation"] = p;
+                }
             }
-            
         }
+
+        {
+            std::unique_lock<std::shared_mutex> lock(model_mutex_);
+            detection_models_ = std::move(parsed_detection_models);
+            if (!default_detection_id.empty()) {
+                current_detection_model_id_ = default_detection_id;
+            }
+        }
+
         // performance settings
         if (root.isMember("performance") && root["performance"].isObject()) {
             const auto& perf = root["performance"];

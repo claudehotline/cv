@@ -36,6 +36,17 @@ struct AnalysisResult {
     std::string error_message;
 };
 
+struct ModelConfig {
+    std::string id;
+    std::string name;
+    std::string type;
+    std::string path;
+    float confidence_threshold {0.0f};
+    float nms_threshold {0.0f};
+    int input_width {0};
+    int input_height {0};
+};
+
 // Compatibility base that conforms to the new interfaces
 class AIModel : public IDetectionModel, public ISegmentationModel {
 public:
@@ -98,11 +109,16 @@ public:
     // Get list of RTSP sources
     std::vector<std::string> getRTSPSourceIds() const;
 
+    const std::vector<ModelConfig>& getDetectionModels() const { return detection_models_; }
+    const std::string& getCurrentDetectionModelId() const { return current_detection_model_id_; }
+
 private:
     std::shared_ptr<IDetectionModel> detection_model_;
     std::shared_ptr<ISegmentationModel> segmentation_model_;
 
     std::map<std::string, std::string> model_path_mapping_;
+    std::vector<ModelConfig> detection_models_;
+    std::string current_detection_model_id_;
     mutable std::shared_mutex model_mutex_;
 
     std::function<void(const AnalysisResult&)> result_callback_;

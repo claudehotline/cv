@@ -164,13 +164,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useAppStore } from '@/stores/appStore'
 import { ElMessage } from 'element-plus'
 
 const appStore = useAppStore()
 const videoSourceStore = appStore.videoSourceStore
 const analysisStore = appStore.analysisStore
+
+// 监听模型选择变化，自动切换模型
+watch(() => analysisStore.selectedModelId, async (newModelId, oldModelId) => {
+  if (newModelId && newModelId !== oldModelId && oldModelId !== '') {
+    try {
+      await analysisStore.loadModel(newModelId)
+      ElMessage.success(`已切换到模型: ${newModelId}`)
+    } catch (error: any) {
+      ElMessage.error(`模型切换失败: ${error.message}`)
+    }
+  }
+})
 
 // 计算属性
 const canStartAnalysis = computed(() =>
