@@ -10,7 +10,7 @@
     <h2>问题诊断步骤:</h2>
     <ol>
         <li>打开浏览器开发者工具 (F12)</li>
-        <li>访问 http://localhost:3000</li>
+        <li>访问 http://localhost:30000</li>
         <li>查看 Console 标签页的错误信息</li>
         <li>查看 Network 标签页的加载情况</li>
         <li>查看 Elements 标签页的DOM结构</li>
@@ -28,7 +28,7 @@
         console.log('如果您在控制台看到这条消息，说明JavaScript可以正常执行');
 
         // 尝试访问前端页面并输出状态
-        fetch('http://localhost:3000')
+        fetch('http://localhost:30000')
         .then(response => {
             console.log('前端页面HTTP状态:', response.status);
             return response.text();

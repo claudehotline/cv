@@ -22,13 +22,13 @@ npm install  # 首次运行需要安装依赖
 npm run dev
 ```
 
-前端会在 http://localhost:3000 启动
+前端会在 http://localhost:30000 启动（见 vite.config.ts）
 
 ## WebRTC 功能测试步骤
 
 ### 1. 基础连接测试
 
-1. 打开浏览器访问 http://localhost:3000
+1. 打开浏览器访问 http://localhost:30000
 2. 点击 "VideoStreams" 页面
 3. 检查页面底部的连接状态：
    - WebSocket连接状态应显示 "已连接"
@@ -46,10 +46,7 @@ npm run dev
 
 通过浏览器开发者工具 (F12) 观察网络活动：
 
-1. **WebSocket 连接** (ws://localhost:8082/ws):
-   - 用于控制命令和状态更新
-
-2. **WebRTC 信令连接** (ws://localhost:8083):
+1. **WebRTC 信令连接**（经由 Vite 代理）: ws://localhost:30000/signaling
    - 认证消息: `{"type":"auth","data":{"client_type":"web_client"}}`
    - 认证成功: `{"type":"auth_success","client_id":"client_123456"}`
    - 请求视频流: `{"type":"request_offer"}`

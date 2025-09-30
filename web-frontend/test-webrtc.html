@@ -49,9 +49,11 @@
         }
 
         function connect() {
-            log('正在连接信令服务器 ws://localhost:8083 ...');
+            const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
+            const signalingUrl = scheme + location.host + '/signaling';
+            log('正在连接信令服务器 ' + signalingUrl + ' ...');
 
-            ws = new WebSocket('ws://localhost:8083');
+            ws = new WebSocket(signalingUrl);
 
             ws.onopen = () => {
                 log('✅ WebSocket连接成功，发送认证消息', false);

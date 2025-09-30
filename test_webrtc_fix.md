@@ -50,14 +50,14 @@ npm run dev
 ```
 
 ### 步骤4: 测试WebRTC连接
-1. 浏览器访问 http://localhost:3000
+1. 浏览器访问 http://localhost:30000
 2. 打开开发者工具 Console
 3. 点击视频流相关页面
 
 **预期Console输出**:
 ```
 🔌 开始WebRTC连接...
-🌐 连接信令服务器: ws://localhost:8083
+🌐 连接信令服务器: ws://localhost:30000/signaling（通过代理）
 🎉 收到欢迎消息，准备认证
 ✅ 认证成功，客户端ID: client_123456
 🔗 创建PeerConnection
