@@ -535,7 +535,7 @@ export class WebRTCClient {
                                (dataView.getUint8(2) << 8) |
                                dataView.getUint8(3)
 
-        console.log('📦 新JPEG帧开始，预期大小:', this.currentFrameSize, 'bytes')
+        // console.log('📦 新JPEG帧开始，预期大小:', this.currentFrameSize, 'bytes')
 
         // 开始接收新帧
         this.frameReceiving = true
@@ -545,7 +545,7 @@ export class WebRTCClient {
         if (data.byteLength > 4) {
           const jpegData = data.slice(4)
           this.jpegBuffer.push(jpegData)
-          console.log('📦 首块数据大小:', jpegData.byteLength)
+          // console.log('📦 首块数据大小:', jpegData.byteLength)
 
           // 检查是否已完整接收
           this.checkFrameComplete()
@@ -556,7 +556,7 @@ export class WebRTCClient {
     } else {
       // 继续接收帧数据
       this.jpegBuffer.push(data)
-      console.log('📦 接收数据块，大小:', data.byteLength)
+      // console.log('📦 接收数据块，大小:', data.byteLength)
       this.checkFrameComplete()
     }
   }
@@ -569,11 +569,11 @@ export class WebRTCClient {
       receivedSize += buffer.byteLength
     }
 
-    console.log(`📊 进度: ${receivedSize}/${this.currentFrameSize} bytes (${((receivedSize/this.currentFrameSize)*100).toFixed(1)}%)`)
+    // console.log(`📊 进度: ${receivedSize}/${this.currentFrameSize} bytes (${((receivedSize/this.currentFrameSize)*100).toFixed(1)}%)`)
 
     // 如果接收完整
     if (receivedSize >= this.currentFrameSize) {
-      console.log('✅ JPEG帧接收完成，开始合并数据')
+      // console.log('✅ JPEG帧接收完成，开始合并数据')
 
       // 合并所有缓冲区
       const fullBuffer = new ArrayBuffer(this.currentFrameSize)
@@ -591,7 +591,7 @@ export class WebRTCClient {
 
       // 验证JPEG文件头
       if (uint8View[0] === 0xFF && uint8View[1] === 0xD8) {
-        console.log('✅ JPEG文件头验证通过')
+        // console.log('✅ JPEG文件头验证通过')
 
         // 触发JPEG帧回调
         if (this.onJpegFrame) {
@@ -609,7 +609,7 @@ export class WebRTCClient {
 
       // 如果有剩余数据，可能是下一帧的开始
       if (receivedSize > this.currentFrameSize) {
-        console.log('📦 处理剩余数据，大小:', receivedSize - this.currentFrameSize)
+        // console.log('📦 处理剩余数据，大小:', receivedSize - this.currentFrameSize)
         // 重新计算剩余数据的正确偏移
         let processedSize = 0
         let remainingBuffer: ArrayBuffer | null = null

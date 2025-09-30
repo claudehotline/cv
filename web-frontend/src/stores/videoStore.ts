@@ -341,8 +341,6 @@ export const useVideoStore = defineStore('video', () => {
     }
     lastFrameTimestamp.value = currentTime
 
-    console.log('🖼️ 收到JPEG帧，大小:', jpegData.byteLength, 'bytes')
-
     // 发送到JPEG播放器
     if (jpegVideoPlayer.value) {
       jpegVideoPlayer.value.displayJpegFrame(jpegData)

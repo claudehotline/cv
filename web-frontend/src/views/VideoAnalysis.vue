@@ -440,7 +440,7 @@ const stopVideoStream = () => {
 
 // JPEG播放器事件处理
 const onFrameReceived = (width: number, height: number) => {
-  console.log('📹 接收到JPEG帧:', width, 'x', height)
+  // 帧接收处理（不输出日志）
 }
 
 const onVideoError = (message: string) => {

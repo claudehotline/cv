@@ -227,6 +227,7 @@ HTTPServer::Response AnalysisAPI::getAnalysisSources(const HTTPServer::Request&)
         for (const auto& source_id : source_ids) {
             Json::Value s;
             s["id"] = source_id;
+            s["name"] = source_id;  // 添加name字段，使用source_id作为显示名称
             s["type"] = "rtsp";
             s["status"] = "active";
             result.append(s);
