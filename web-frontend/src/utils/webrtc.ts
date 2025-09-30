@@ -23,6 +23,7 @@ export class WebRTCClient {
   private jpegBuffer: ArrayBuffer[] = []
   private currentFrameSize: number = 0
   private frameReceiving: boolean = false
+  private dataChannelReady: boolean = false  // DataChannel是否已打开
 
   private config: WebRTCConfig
   private onConnected?: () => void
@@ -103,13 +104,27 @@ export class WebRTCClient {
     this.onError = handlers.onError
   }
 
-  requestVideoStream(): void {
+  requestVideoStream(sourceId?: string): void {
     if (this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN) {
-      const message: SignalingMessage = {
-        type: 'request_offer',
-        timestamp: Date.now()
+      // 如果DataChannel已经打开，只需要切换视频源，不需要重新建立连接
+      if (this.dataChannelReady && this.peerConnection && this.peerConnection.connectionState === 'connected') {
+        const message: SignalingMessage = {
+          type: 'switch_source',
+          data: { source_id: sourceId },
+          timestamp: Date.now()
+        }
+        console.log('📤 切换视频源，source_id:', sourceId, '(复用现有连接)')
+        this.signalingSocket.send(JSON.stringify(message))
+      } else {
+        // 首次连接或连接断开，需要重新建立WebRTC连接
+        const message: SignalingMessage = {
+          type: 'request_offer',
+          data: sourceId ? { source_id: sourceId } : undefined,
+          timestamp: Date.now()
+        }
+        console.log('📤 请求视频流，source_id:', sourceId, '(建立新连接)')
+        this.signalingSocket.send(JSON.stringify(message))
       }
-      this.signalingSocket.send(JSON.stringify(message))
     }
   }
 
@@ -210,10 +225,12 @@ export class WebRTCClient {
 
       this.dataChannel.onopen = () => {
         console.log('✅ 数据通道已打开')
+        this.dataChannelReady = true
       }
 
       this.dataChannel.onclose = () => {
         console.log('❌ 数据通道已关闭')
+        this.dataChannelReady = false
       }
 
       this.dataChannel.onerror = (error) => {

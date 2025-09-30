@@ -190,6 +190,15 @@ bool WebRTCStreamer::CreateOffer(const std::string& client_id, std::string& sdp_
         {
             std::lock_guard<std::mutex> lock(clients_mutex_);
 
+            // 保留旧客户端的requested_source（如果存在）
+            std::string preserved_source = "camera_01";  // 默认值
+            auto existing_client_it = clients_.find(client_id);
+            if (existing_client_it != clients_.end()) {
+                preserved_source = existing_client_it->second->requested_source;
+                std::cout << "客户端 " << client_id << " 重新连接，保留视频源: " << preserved_source << std::endl;
+                clients_.erase(existing_client_it);
+            }
+
             // �����µ�PeerConnection
             auto peer_connection = CreatePeerConnection(client_id);
             if (!peer_connection) {
@@ -202,6 +211,7 @@ bool WebRTCStreamer::CreateOffer(const std::string& client_id, std::string& sdp_
             client->peer_connection = peer_connection;
             client->connected = false;
             client->connect_time = std::chrono::steady_clock::now();
+            client->requested_source = preserved_source;  // 恢复之前的视频源
 
             // ��������ͨ����������Ƶ֡��JPEG��ʽ��
             // ʹ������ͨ������Ƶ������򵥣�����Ҫ���ӵ�H.264����

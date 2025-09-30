@@ -127,7 +127,7 @@ void SignalingServer::onMessage(std::shared_ptr<ix::ConnectionState> connectionS
                 for (auto& [weak_ws, client_id] : connection_to_client_) {
                     if (auto shared_ws = weak_ws.lock()) {
                         if (shared_ws.get() == &webSocket) {
-                            if (msg_type == "webrtc" || msg_type == "request_offer" || msg_type == "answer" || msg_type == "ice_candidate") {
+                            if (msg_type == "webrtc" || msg_type == "request_offer" || msg_type == "answer" || msg_type == "ice_candidate" || msg_type == "switch_source") {
                                 handleWebRTCSignaling(client_id, json_msg);
                             } else if (msg_type == "control" || msg_type == "start_analysis" || msg_type == "stop_analysis") {
                                 handleControlMessage(client_id, json_msg);

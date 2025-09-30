@@ -83,16 +83,29 @@ int main(int argc, char* argv[]) {
         std::cout << "Received signaling message from " << client_id << ": " << msg_type << std::endl;
 
         if (msg_type == "request_offer") {
-            // Check if source_id is specified in the request
+            std::string sdp_offer;
+            if (!analyzer.createWebRTCOffer(client_id, sdp_offer)) {
+                std::cerr << "Failed to create WebRTC offer" << std::endl;
+            }
+
+            // Check if source_id is specified in the request, and set it AFTER creating the client
             if (message.isMember("data") && message["data"].isMember("source_id")) {
                 std::string requested_source = message["data"]["source_id"].asString();
                 std::cout << "Client " << client_id << " requested source: " << requested_source << std::endl;
                 analyzer.setWebRTCClientSource(client_id, requested_source);
             }
+        } else if (msg_type == "switch_source") {
+            // 切换视频源，不重新建立连接
+            if (message.isMember("data") && message["data"].isMember("source_id")) {
+                std::string requested_source = message["data"]["source_id"].asString();
+                std::cout << "Client " << client_id << " switching to source: " << requested_source << std::endl;
 
-            std::string sdp_offer;
-            if (!analyzer.createWebRTCOffer(client_id, sdp_offer)) {
-                std::cerr << "Failed to create WebRTC offer" << std::endl;
+                // 尝试设置源，如果客户端不存在则忽略（可能客户端还在建立连接中）
+                if (!analyzer.setWebRTCClientSource(client_id, requested_source)) {
+                    std::cout << "⚠️ 客户端 " << client_id << " 还未建立连接，等待连接建立后将使用默认源" << std::endl;
+                }
+            } else {
+                std::cerr << "switch_source message missing source_id" << std::endl;
             }
         } else if (msg_type == "answer") {
             if (message.isMember("data") && message["data"].isMember("sdp")) {
