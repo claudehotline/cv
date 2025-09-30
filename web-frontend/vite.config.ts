@@ -10,8 +10,8 @@ export default defineConfig({
     }
   },
   server: {
-    host: '0.0.0.0',
-    port: 3000,
+    host: 'localhost',
+    port: 30000,
     proxy: {
       // 视频源管理API代理
       '/api/source-manager': {

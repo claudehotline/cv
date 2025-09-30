@@ -1,36 +1,22 @@
 #pragma once
 
 #include <opencv2/opencv.hpp>
-#include <memory>
-#include <vector>
-#include <string>
+
+#include <atomic>
 #include <functional>
-#include <thread>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <queue>
-
-#ifdef USE_ONNXRUNTIME
-#include <onnxruntime_cxx_api.h>
-#endif
+#include <shared_mutex>
+#include <string>
+#include <thread>
+#include <vector>
 
 #include "WebRTCStreamer.h"
-
-enum class AnalysisType {
-    OBJECT_DETECTION,
-    INSTANCE_SEGMENTATION
-};
-
-struct DetectionResult {
-    cv::Rect bbox;
-    float confidence;
-    int class_id;
-    std::string class_name;
-};
-
-struct SegmentationResult {
-    std::vector<DetectionResult> detections;
-    cv::Mat mask;
-};
+#include "analysis/Types.h"
+#include "analysis/Interfaces.h"
+#include "analysis/OnnxRuntimeBackend.h"
 
 struct AnalysisRequest {
     cv::Mat frame;
@@ -50,47 +36,16 @@ struct AnalysisResult {
     std::string error_message;
 };
 
-class AIModel {
+// Compatibility base that conforms to the new interfaces
+class AIModel : public IDetectionModel, public ISegmentationModel {
 public:
-    virtual ~AIModel() = default;
-    virtual bool initialize(const std::string& model_path) = 0;
-    virtual std::vector<DetectionResult> detectObjects(const cv::Mat& frame) = 0;
-    virtual SegmentationResult segmentInstances(const cv::Mat& frame) = 0;
+    ~AIModel() override = default;
+    virtual bool initialize(const std::string& model_path) override = 0;
+    virtual std::vector<DetectionResult> detectObjects(const cv::Mat& frame) override = 0;
+    virtual SegmentationResult segmentInstances(const cv::Mat& frame) override = 0;
 };
 
-#ifdef USE_ONNXRUNTIME
-class ONNXModel : public AIModel {
-public:
-    ONNXModel();
-    ~ONNXModel() override;
-
-    bool initialize(const std::string& model_path) override;
-    std::vector<DetectionResult> detectObjects(const cv::Mat& frame) override;
-    SegmentationResult segmentInstances(const cv::Mat& frame) override;
-
-private:
-    std::unique_ptr<Ort::Env> env_;
-    std::unique_ptr<Ort::Session> session_;
-    std::vector<std::string> input_names_;
-    std::vector<std::string> output_names_;
-    std::vector<std::string> class_names_;
-
-    cv::Mat preprocessImage(const cv::Mat& frame);
-    std::vector<DetectionResult> postprocessDetection(const std::vector<float>& outputs,
-                                                     const cv::Size& original_size);
-};
-#endif
-
-class SimpleModel : public AIModel {
-public:
-    bool initialize(const std::string& model_path) override;
-    std::vector<DetectionResult> detectObjects(const cv::Mat& frame) override;
-    SegmentationResult segmentInstances(const cv::Mat& frame) override;
-
-private:
-    cv::CascadeClassifier face_cascade_;
-    bool model_loaded_;
-};
+// No concrete model implementations declared here; models live under models/ and adapters.
 
 class VideoAnalyzer {
 public:
@@ -102,38 +57,53 @@ public:
     void setResultCallback(std::function<void(const AnalysisResult&)> callback);
 
     bool processFrame(const cv::Mat& frame, const std::string& source_id,
-                     AnalysisType type, int request_id);
+                      AnalysisType type, int request_id);
 
     void start();
     void stop();
 
     bool isRunning() const;
 
-    // WebRTC相关方法
+    // WebRTC related
     bool startWebRTCStreaming(int port = 8080);
     void stopWebRTCStreaming();
     bool createWebRTCOffer(const std::string& client_id, std::string& sdp_offer);
     bool handleWebRTCAnswer(const std::string& client_id, const std::string& sdp_answer);
     bool addWebRTCIceCandidate(const std::string& client_id, const Json::Value& candidate);
+    bool setWebRTCClientSource(const std::string& client_id, const std::string& source_id);
 
-    // 设置WebRTC事件回调
+    // WebRTC event callbacks
     void setWebRTCClientConnectedCallback(std::function<void(const std::string&)> callback);
     void setWebRTCClientDisconnectedCallback(std::function<void(const std::string&)> callback);
     void setWebRTCSignalingCallback(std::function<void(const std::string&, const Json::Value&)> callback);
 
-    // RTSP流接收相关方法
-    bool addRTSPSource(const std::string& source_id, const std::string& rtsp_url, AnalysisType type = AnalysisType::OBJECT_DETECTION);
+    // RTSP source management
+    bool addRTSPSource(const std::string& source_id, const std::string& rtsp_url,
+                       AnalysisType type = AnalysisType::OBJECT_DETECTION);
     bool removeRTSPSource(const std::string& source_id);
     void startRTSPProcessing();
     void stopRTSPProcessing();
     bool isRTSPProcessing() const;
 
-    // 公开给测试视频生成器使用
+    // For test video generator (if used externally)
     void pushFrameToWebRTC(const cv::Mat& frame, const std::string& source_id);
 
+    // Analysis control
+    void setAnalysisEnabled(bool enabled);
+    bool isAnalysisEnabled() const;
+
+    // Hot switch models
+    bool setCurrentModel(const std::string& model_id, AnalysisType type);
+
+    // Get list of RTSP sources
+    std::vector<std::string> getRTSPSourceIds() const;
+
 private:
-    std::unique_ptr<AIModel> detection_model_;
-    std::unique_ptr<AIModel> segmentation_model_;
+    std::shared_ptr<IDetectionModel> detection_model_;
+    std::shared_ptr<ISegmentationModel> segmentation_model_;
+
+    std::map<std::string, std::string> model_path_mapping_;
+    mutable std::shared_mutex model_mutex_;
 
     std::function<void(const AnalysisResult&)> result_callback_;
 
@@ -143,13 +113,17 @@ private:
 
     std::vector<std::thread> worker_threads_;
     std::atomic<bool> running_;
-    int num_workers_;
+    int num_workers_ {2};
+    int max_queue_size_ {5};
 
     // WebRTC streaming
     std::unique_ptr<WebRTCStreamer> webrtc_streamer_;
-    bool webrtc_enabled_;
+    bool webrtc_enabled_ {false};
 
-    // RTSP流接收相关
+    // Analysis enable switch
+    std::atomic<bool> analysis_enabled_;
+
+    // RTSP source holder
     struct RTSPSource {
         std::string source_id;
         std::string rtsp_url;
@@ -161,13 +135,16 @@ private:
     };
 
     std::vector<std::unique_ptr<RTSPSource>> rtsp_sources_;
-    std::mutex rtsp_sources_mutex_;
+    mutable std::mutex rtsp_sources_mutex_;
     std::atomic<bool> rtsp_processing_;
+
+    // Inference configuration
+    InferenceConfig inference_config_;
 
     void workerLoop();
     void processRequest(const AnalysisRequest& request);
 
-    // RTSP处理相关私有方法
+    // RTSP
     void rtspProcessingLoop(RTSPSource* source);
 
     bool loadConfig(const std::string& config_file);

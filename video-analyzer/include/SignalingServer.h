@@ -1,5 +1,8 @@
-#pragma once
+﻿#pragma once
 
+#ifndef IXWEBSOCKET_HEADER_ONLY
+#define IXWEBSOCKET_HEADER_ONLY
+#endif
 #include <ixwebsocket/IXWebSocketServer.h>
 #include <json/json.h>
 #include <memory>

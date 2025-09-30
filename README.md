@@ -176,8 +176,8 @@ cd video-analysis-system
 sudo apt-get update
 sudo apt-get install libopencv-dev libjsoncpp-dev ffmpeg
 
-# Windows (使用vcpkg)
-vcpkg install opencv jsoncpp websocketpp
+# Windows (使用 vcpkg)
+vcpkg install opencv jsoncpp ixwebsocket libdatachannel boost-system
 
 # macOS
 brew install opencv jsoncpp ffmpeg
@@ -218,7 +218,7 @@ cd build/bin
 - HTTP REST API服务 (8082)
 - WebRTC信令服务 (8083)
 
-3. **启动Web前端** (端口3000)
+3. **启动Web前端** (端口30000)
 ```bash
 cd web-frontend
 npm run dev
@@ -226,9 +226,20 @@ npm run dev
 
 4. **访问系统界面**
 ```
-Web界面: http://localhost:3000
+Web界面: http://localhost:30000
 视频源API: http://localhost:8081/api
 分析API: http://localhost:8082/api
+```
+
+### 前端开发代理说明
+
+- 已在 `web-frontend/vite.config.ts` 配置以下代理：
+  - `/api/analyzer` → `http://localhost:8082/api`
+  - `/api/source-manager` → `http://localhost:8081/api`
+  - `/signaling`（WS）→ `ws://localhost:8083`
+- 建议前端使用上述代理路径访问后端与信令服务，避免跨域与端口暴露。
+- WebRTC 信令推荐使用绝对 WS 地址，基于当前页面协议与主机构造：
+  - `const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss://' : 'ws://'}${location.host}/signaling`)`
 ```
 
 ### 🎯 典型使用流程

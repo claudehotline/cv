@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #ifdef _WIN32
 #ifdef DELETE
@@ -32,7 +32,6 @@ public:
         int status_code = 200;        // HTTP状态码
         std::map<std::string, std::string> headers;
         std::string body;             // 响应体
-
         Response(int code = 200) : status_code(code) {
             headers["Content-Type"] = "application/json";
             headers["Access-Control-Allow-Origin"] = "*";

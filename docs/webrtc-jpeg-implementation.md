@@ -111,8 +111,8 @@ npm run dev
 ```
 
 访问测试页面：
-- 主界面: http://localhost:3000/video-streams
-- JPEG测试: http://localhost:3000/jpeg-test
+- 主界面: http://localhost:30000/video-analysis
+- JPEG 测试: http://localhost:30000/jpeg-test
 
 ### 测试流程
 
@@ -224,10 +224,10 @@ const size_t MAX_CHUNK_SIZE = 16384;
 const int TARGET_FPS = 30;
 ```
 
-**WebRTCClient配置**:
+**WebRTCClient配置（开发模式经由代理）**:
 ```typescript
 const config: WebRTCConfig = {
-  signalingServerUrl: 'ws://localhost:8083',
+  signalingServerUrl: `${window.location.protocol === 'https:' ? 'wss://' : 'ws://'}${window.location.host}/signaling`,
   stunServers: [] // 本地连接不使用STUN
 }
 ```

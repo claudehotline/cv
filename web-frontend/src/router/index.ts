@@ -1,17 +1,21 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import VideoStreams from '@/views/VideoStreams.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/',
-      redirect: '/video-streams'
+      redirect: '/video-analysis'
     },
     {
-      path: '/video-streams',
-      name: 'VideoStreams',
-      component: VideoStreams
+      path: '/video-analysis',
+      name: 'VideoAnalysis',
+      component: () => import('@/views/VideoAnalysis.vue')
+    },
+    {
+      path: '/video-source-manager',
+      name: 'VideoSourceManager',
+      component: () => import('@/views/VideoSourceManager.vue')
     },
     {
       path: '/analysis-results',

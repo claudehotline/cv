@@ -1,21 +1,27 @@
-{
+﻿{
     "num_workers": 2,
     "webrtc_enabled": true,
     "webrtc_port": 8080,
     "models": {
         "detection": {
             "type": "onnx",
-            "path": "models/yolov5s.onnx",
-            "input_size": [640, 640],
-            "confidence_threshold": 0.5,
-            "nms_threshold": 0.4
+            "path": "model/yolov12x.onnx",
+            "input_size": [
+                640,
+                640
+            ],
+            "confidence_threshold": 0.65,
+            "nms_threshold": 0.45
         },
         "segmentation": {
             "type": "onnx",
-            "path": "models/yolov5s-seg.onnx",
-            "input_size": [640, 640],
-            "confidence_threshold": 0.5,
-            "nms_threshold": 0.4
+            "path": "model/yolov12x.onnx",
+            "input_size": [
+                640,
+                640
+            ],
+            "confidence_threshold": 0.65,
+            "nms_threshold": 0.45
         }
     },
     "communication": {
@@ -23,6 +29,24 @@
         "output_port": 8082,
         "websocket_enabled": true,
         "signaling_port": 8083
+    },
+    "video_encoding": {
+        "mode": "jpeg",
+        "jpeg": {
+            "quality": 75,
+            "max_width": 640,
+            "max_height": 480
+        },
+        "h264": {
+            "width": 1280,
+            "height": 720,
+            "fps": 30,
+            "bitrate": 1500000,
+            "gop_size": 30,
+            "preset": "fast",
+            "profile": "baseline",
+            "use_hardware": true
+        }
     },
     "webrtc": {
         "stun_servers": [
@@ -49,8 +73,21 @@
         "timeout_ms": 30000
     },
     "performance": {
-        "max_queue_size": 100,
+        "max_queue_size": 5,
         "timeout_ms": 5000,
         "target_fps": 30
+    },
+    "inference": {
+        "device": "auto",
+        "cuda": {
+            "device_id": 0,
+            "gpu_mem_limit": 2147483648,
+            "cudnn_conv_algo_search": "DEFAULT"
+        },
+        "cpu": {
+            "num_threads": 4,
+            "use_arena": true
+        },
+        "enable_profiling": false
     }
 }

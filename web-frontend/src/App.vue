@@ -8,15 +8,19 @@
       <el-container>
         <el-aside width="250px" class="sidebar">
           <el-menu
-            default-active="video-streams"
+            default-active="/video-analysis"
             router
             background-color="#545c64"
             text-color="#fff"
             active-text-color="#ffd04b"
           >
-            <el-menu-item index="/video-streams">
+            <el-menu-item index="/video-analysis">
+              <el-icon><VideoPlay /></el-icon>
+              <span>视频分析</span>
+            </el-menu-item>
+            <el-menu-item index="/video-source-manager">
               <el-icon><Camera /></el-icon>
-              <span>视频流管理</span>
+              <span>视频源管理</span>
             </el-menu-item>
             <el-menu-item index="/analysis-results">
               <el-icon><TrendCharts /></el-icon>
@@ -39,6 +43,7 @@
 
 <script setup lang="ts">
 import { RouterView } from 'vue-router'
+import { Camera, TrendCharts, Setting, VideoPlay } from '@element-plus/icons-vue'
 </script>
 
 <style scoped>

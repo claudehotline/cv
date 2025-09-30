@@ -3,6 +3,15 @@ import { ref, computed } from 'vue'
 import type { VideoSource, AnalysisResult, AnalysisType } from '@/types'
 import { WebRTCClient, type WebRTCConfig } from '@/utils/webrtc'
 
+// 模型信息接口
+interface ModelInfo {
+  id: string
+  name: string
+  type: string
+  status: 'loaded' | 'available' | 'loading' | 'error'
+  description?: string
+}
+
 export const useVideoStore = defineStore('video', () => {
   // 状态
   const videoSources = ref<VideoSource[]>([])
@@ -14,6 +23,11 @@ export const useVideoStore = defineStore('video', () => {
 
   const selectedSourceId = ref<string>('')
   const selectedAnalysisType = ref<string>('object_detection')
+
+  // 模型相关状态
+  const availableModels = ref<ModelInfo[]>([])
+  const selectedModelId = ref<string>('')
+  const isAnalyzing = ref(false)
 
   const wsConnection = ref<WebSocket | null>(null)
   const connectionStatus = ref<'connecting' | 'connected' | 'disconnected'>('disconnected')
@@ -43,6 +57,11 @@ export const useVideoStore = defineStore('video', () => {
       .filter(result => result.source_id === selectedSourceId.value)
       .sort((a, b) => b.timestamp - a.timestamp)
       .slice(0, 10)
+  )
+
+  // 根据选中的分析类型过滤模型
+  const filteredModels = computed(() =>
+    availableModels.value.filter(model => model.type === selectedAnalysisType.value)
   )
 
   // 方法
@@ -96,6 +115,14 @@ export const useVideoStore = defineStore('video', () => {
     console.log('添加视频源:', newSource.name)
   }
 
+  const updateVideoSource = (source: VideoSource) => {
+    const index = videoSources.value.findIndex(s => s.id === source.id)
+    if (index > -1) {
+      videoSources.value[index] = source
+      console.log('更新视频源:', source.name)
+    }
+  }
+
   const removeVideoSource = (sourceId: string) => {
     const index = videoSources.value.findIndex(s => s.id === sourceId)
     if (index > -1) {
@@ -111,14 +138,29 @@ export const useVideoStore = defineStore('video', () => {
     }
   }
 
-  const startAnalysis = (sourceId: string, analysisType: string) => {
+  const setSelectedModel = (modelId: string) => {
+    selectedModelId.value = modelId
+  }
+
+  const getAnalysisStatus = async () => {
+    // 简化实现：返回当前状态
+    return {
+      isAnalyzing: isAnalyzing.value,
+      selectedSourceId: selectedSourceId.value,
+      selectedModelId: selectedModelId.value
+    }
+  }
+
+  const startAnalysis = async (sourceId: string, analysisType: string) => {
     console.log('开始分析:', sourceId, analysisType)
+    isAnalyzing.value = true
     // 简化实现：直接通过WebRTC请求视频流
     requestVideoStream()
   }
 
-  const stopAnalysis = (sourceId: string) => {
+  const stopAnalysis = async (sourceId: string) => {
     console.log('停止分析:', sourceId)
+    isAnalyzing.value = false
   }
 
   const setSelectedSource = (sourceId: string) => {
@@ -239,39 +281,54 @@ export const useVideoStore = defineStore('video', () => {
     }
   }
 
-  // 初始化
-  const init = () => {
-    // 添加一些示例视频源
-    videoSources.value = [
-      {
-        id: 'camera_01',
-        name: '摄像头 1',
-        type: 'camera',
-        url: '/dev/video0',
-        status: 'active',
-        fps: 30,
-        resolution: '1280x720'
-      },
-      {
-        id: 'file_01',
-        name: '测试视频',
-        type: 'file',
-        url: 'test_video.mp4',
-        status: 'inactive',
-        fps: 25,
-        resolution: '1920x1080'
+  // 从后端获取模型列表
+  const fetchModels = async () => {
+    try {
+      const response = await fetch('/api/analyzer/models')
+      const data = await response.json()
+      if (data.success && data.data) {
+        availableModels.value = data.data
+        if (availableModels.value.length > 0 && !selectedModelId.value) {
+          selectedModelId.value = availableModels.value[0].id
+        }
       }
-    ]
-
-    if (videoSources.value.length > 0) {
-      selectedSourceId.value = videoSources.value[0].id
+    } catch (error) {
+      console.error('获取模型列表失败:', error)
     }
+  }
 
+  // 从后端获取视频源列表
+  const fetchVideoSources = async () => {
+    try {
+      const response = await fetch('/api/analyzer/sources')
+      const data = await response.json()
+      if (data.success && data.data) {
+        videoSources.value = data.data
+        if (videoSources.value.length > 0 && !selectedSourceId.value) {
+          selectedSourceId.value = videoSources.value[0].id
+        }
+      }
+    } catch (error) {
+      console.error('获取视频源列表失败:', error)
+    }
+  }
+
+  // 初始化
+  const init = async () => {
     // 初始化WebSocket用于控制命令，WebRTC用于视频流
     console.log('🚀 videoStore.init() - 开始初始化')
     connectWebSocket()
     console.log('🎯 正在连接WebRTC...')
     connectWebRTC()
+
+    // 从后端获取视频源列表
+    console.log('📹 正在获取视频源列表...')
+    await fetchVideoSources()
+
+    // 从后端获取模型列表
+    console.log('📦 正在获取模型列表...')
+    await fetchModels()
+
     console.log('✅ videoStore.init() - 初始化完成')
   }
 
@@ -284,6 +341,11 @@ export const useVideoStore = defineStore('video', () => {
     selectedAnalysisType,
     connectionStatus,
 
+    // 模型相关状态
+    availableModels,
+    selectedModelId,
+    isAnalyzing,
+
     // WebRTC状态
     webrtcConnected,
     videoStream,
@@ -293,15 +355,21 @@ export const useVideoStore = defineStore('video', () => {
     activeVideoSources,
     selectedSource,
     recentAnalysisResults,
+    filteredModels,
 
     // 方法
     connectWebSocket,
     addVideoSource,
+    updateVideoSource,
     removeVideoSource,
     startAnalysis,
     stopAnalysis,
     setSelectedSource,
     setSelectedAnalysisType,
+    setSelectedModel,
+    getAnalysisStatus,
+    fetchModels,
+    fetchVideoSources,
 
     // WebRTC方法
     connectWebRTC,

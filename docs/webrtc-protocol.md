@@ -2,7 +2,7 @@
 
 ## 概述
 
-本文档描述了视频分析系统中WebRTC实时视频传输的通信协议。系统采用WebSocket进行信令交换，WebRTC进行实时视频流传输。
+本文档描述了视频分析系统中 WebRTC 实时视频传输的通信协议。系统采用 WebSocket 进行信令交换，当前实现通过 WebRTC Data Channel 传输 JPEG 帧进行视频预览（不创建媒体 Track）。
 
 ## 架构组成
 
@@ -146,20 +146,27 @@
 }
 ```
 
-### 视频编解码配置
-- **视频编解码**: VP8/H.264
-- **音频**: 禁用
-- **码率**: 2000 kbps
-- **帧率**: 30 FPS
+### 视频传输配置（当前实现）
+- 视频传输: DataChannel 传输 JPEG 帧（分块 16KB，首 4 字节为帧大小，大端序）
+- 媒体 Track: 不使用（ontrack 仅用于兼容日志）
+- 音频: 禁用
+- 帧率: 约 30 FPS
 
 ## 端口分配
 
 | 服务 | 端口 | 协议 | 用途 |
 |------|------|------|------|
-| WebRTC推流 | 8080 | UDP/TCP | 视频流传输 |
-| WebSocket控制 | 8082 | TCP | 控制命令 |
-| WebRTC信令 | 8083 | TCP | WebRTC信令交换 |
-| Web前端 | 3000 | TCP | HTTP服务 |
+| WebRTC 推流 | 8080 | UDP/TCP | P2P 连接（DataChannel） |
+| Analyzer HTTP API | 8082 | HTTP | 分析/模型 REST 接口 |
+| WebRTC 信令 | 8083 | WebSocket | 信令交换与控制消息 |
+| Web 前端 (Vite) | 30000 | HTTP | 开发服务器 |
+
+开发建议：前端在开发模式下通过 Vite 代理连接信令服务，使用路径 `/signaling`（Vite 已将其代理到 `ws://localhost:8083`）。前端应根据当前页面协议构造绝对 WS 地址，例如：
+
+```
+const wsScheme = location.protocol === 'https:' ? 'wss://' : 'ws://'
+const signalingUrl = `${wsScheme}${location.host}/signaling`
+```
 
 ## 错误处理
 

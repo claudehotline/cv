@@ -1,4 +1,4 @@
-#include "SignalingServer.h"
+﻿#include "SignalingServer.h"
 #include <iostream>
 #include <sstream>
 #include <random>
@@ -97,6 +97,7 @@ void SignalingServer::onConnection(std::weak_ptr<ix::WebSocket> webSocket, std::
 
 void SignalingServer::onMessage(std::shared_ptr<ix::ConnectionState> connectionState, ix::WebSocket& webSocket, const ix::WebSocketMessagePtr& msg) {
     if (msg->type == ix::WebSocketMessageType::Message) {
+        std::cout << "收到WebSocket消息: " << msg->str << std::endl;
         try {
             Json::Value json_msg;
             Json::CharReaderBuilder builder;
@@ -105,6 +106,7 @@ void SignalingServer::onMessage(std::shared_ptr<ix::ConnectionState> connectionS
             std::istringstream iss(msg->str);
             if (!Json::parseFromStream(builder, iss, &json_msg, &errs)) {
                 std::cerr << "JSON parsing error: " << errs << std::endl;
+                std::cerr << "原始消息: " << msg->str << std::endl;
                 return;
             }
 
@@ -130,7 +132,7 @@ void SignalingServer::onMessage(std::shared_ptr<ix::ConnectionState> connectionS
                             } else if (msg_type == "control" || msg_type == "start_analysis" || msg_type == "stop_analysis") {
                                 handleControlMessage(client_id, json_msg);
                             } else {
-                                std::cout << "未知消息类型: " << msg_type << " from " << client_id << std::endl;
+                                std::cout << "鏈煡娑堟伅绫诲瀷: " << msg_type << " from " << client_id << std::endl;
                             }
                             break;
                         }
@@ -164,7 +166,7 @@ void SignalingServer::onMessage(std::shared_ptr<ix::ConnectionState> connectionS
 }
 
 void SignalingServer::handleClientAuthentication(std::weak_ptr<ix::WebSocket> webSocket, const Json::Value& message) {
-    // 支持两种格式：直接属性或嵌套在data中
+    // Support direct properties or payload nested under data
     std::string client_type = message.get("client_type", "").asString();
     if (client_type.empty() && message.isMember("data")) {
         client_type = message["data"].get("client_type", "").asString();
@@ -201,15 +203,14 @@ void SignalingServer::handleClientAuthentication(std::weak_ptr<ix::WebSocket> we
 
     std::cout << "Client authenticated: " << client_id << " (" << client_type << ")" << std::endl;
 }
-
 void SignalingServer::handleWebRTCSignaling(const std::string& client_id, const Json::Value& message) {
     std::string msg_type = message.get("type", "").asString();
-    std::cout << "处理WebRTC信令消息: " << msg_type << " from " << client_id << std::endl;
+    std::cout << "澶勭悊WebRTC淇′护娑堟伅: " << msg_type << " from " << client_id << std::endl;
 
     if (video_analyzer_callback_) {
         video_analyzer_callback_(client_id, message);
     } else {
-        std::cerr << "警告: video_analyzer_callback_ 未设置" << std::endl;
+        std::cerr << "璀﹀憡: video_analyzer_callback_ 鏈锟? << std::endl";
     }
 }
 
@@ -274,3 +275,4 @@ size_t SignalingServer::getClientCount() const {
 void SignalingServer::setVideoAnalyzerCallback(std::function<void(const std::string&, const Json::Value&)> callback) {
     video_analyzer_callback_ = callback;
 }
+

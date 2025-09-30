@@ -20,30 +20,31 @@ public:
     WebRTCVideoSource();
     ~WebRTCVideoSource();
 
-    // 推送视频帧
-    void PushFrame(const cv::Mat& frame);
+    // 推送视频帧到特定源
+    void PushFrame(const std::string& source_id, const cv::Mat& frame);
     void SetFrameRate(int fps) { target_fps_ = fps; }
 
-    // 获取编码后的H.264数据
-    std::vector<uint8_t> GetEncodedFrame();
-    bool HasEncodedFrame() const;
+    // 获取特定源的编码后数据
+    std::vector<uint8_t> GetEncodedFrame(const std::string& source_id);
+    bool HasEncodedFrame(const std::string& source_id) const;
 
 private:
     int target_fps_;
-    std::chrono::steady_clock::time_point last_frame_time_;
 
-    mutable std::mutex frame_mutex_;
-    std::queue<std::vector<uint8_t>> encoded_frames_;
+    // 为每个视频源维护独立的帧队列
+    struct SourceData {
+        std::queue<std::vector<uint8_t>> encoded_frames;
+        std::chrono::steady_clock::time_point last_frame_time;
+        int frame_width = 0;
+        int frame_height = 0;
+        bool encoder_initialized = false;
+    };
+
+    mutable std::mutex sources_mutex_;
+    std::map<std::string, SourceData> video_sources_;
 
     // 简化版编码器相关
-    void InitializeEncoder(int width, int height);
-    void CleanupEncoder();
     std::vector<uint8_t> EncodeFrame(const cv::Mat& frame);
-
-    bool encoder_initialized_;
-    int frame_width_;
-    int frame_height_;
-    int64_t frame_counter_;
 };
 
 class WebRTCStreamer {
@@ -58,6 +59,10 @@ public:
     bool CreateOffer(const std::string& client_id, std::string& sdp_offer);
     bool HandleAnswer(const std::string& client_id, const std::string& sdp_answer);
     bool AddIceCandidate(const std::string& client_id, const Json::Value& candidate);
+
+    // 客户端源选择
+    bool SetClientSource(const std::string& client_id, const std::string& source_id);
+    std::string GetClientSource(const std::string& client_id) const;
 
     // 视频流推送
     void PushFrame(const std::string& source_id, const cv::Mat& frame);
@@ -87,6 +92,7 @@ private:
     // 连接管理 - 使用libdatachannel
     struct ClientConnection {
         std::string client_id;
+        std::string requested_source = "camera_01";  // 客户端请求的视频源，默认camera_01
         std::shared_ptr<rtc::PeerConnection> peer_connection;
         std::shared_ptr<rtc::Track> video_track;
         std::shared_ptr<rtc::DataChannel> data_channel;

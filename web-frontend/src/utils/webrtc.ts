@@ -118,7 +118,11 @@ export class WebRTCClient {
       this.signalingSocket = new WebSocket(this.config.signalingServerUrl)
 
       this.signalingSocket.onopen = () => {
-        this.authenticate()
+        console.log('✅ WebSocket已打开, readyState:', this.signalingSocket?.readyState)
+        // 确保WebSocket完全打开后再发送认证消息
+        setTimeout(() => {
+          this.authenticate()
+        }, 100)
         resolve()
       }
 
@@ -166,7 +170,11 @@ export class WebRTCClient {
       timestamp: Date.now()
     }
 
-    this.signalingSocket?.send(JSON.stringify(authMessage))
+    const authJson = JSON.stringify(authMessage)
+    console.log('🔐 发送认证消息:', authJson)
+    console.log('📡 WebSocket状态:', this.signalingSocket?.readyState)
+    this.signalingSocket?.send(authJson)
+    console.log('✅ 认证消息已发送')
   }
 
   private createPeerConnection(): void {
