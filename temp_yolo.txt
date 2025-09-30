@@ -1,0 +1,81 @@
+#pragma once
+#include <opencv2/opencv.hpp>
+#include <onnxruntime_cxx_api.h>
+#include <vector>
+#include <string>
+
+struct Yolov12Setting {
+    std::vector<float> conf_thres_list = {
+        0.01f,
+        0.0254f,
+        0.0652f,
+        0.1151f,
+        0.2011f,
+        0.2625f,
+        0.2502f,
+        0.3298f
+    };
+    std::vector<float> iou_thres_list = {
+        0.326f,
+        0.3141f,
+        0.2725f,
+        0.2639f,
+        0.2657f,
+        0.2912f,
+        0.2987f,
+        0.33f
+    };
+    float conf_thres = 0.2625f;
+    float iou_thres = 0.2912f;
+};
+
+struct Yolov12Padding {
+    int x;
+    int y;
+    float scale;
+};
+
+struct Yolov12BBox {
+    float x, y, width, height;
+    std::string class_name;
+    float confidence;
+};
+
+void yolov12_nms(std::vector<cv::Rect2f> bboxes, std::vector<float> scores, std::vector<int> & indices, float thresh);
+
+class Yolov12 {
+private:
+    const Yolov12Setting _setting;
+    const int _model_input_h = 1280;
+    const int _model_input_w = 1280;
+    Yolov12Padding _padding;
+    const std::vector<std::string> _class_names = {
+        "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
+        "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat",
+        "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack",
+        "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball",
+        "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket",
+        "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
+        "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair",
+        "couch", "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse",
+        "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator",
+        "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"
+    };
+
+    Ort::Env _env;
+    Ort::SessionOptions _session_options;
+    std::unique_ptr<Ort::Session> _session;
+    Ort::MemoryInfo _memory_info;
+    std::vector<const char *> _input_node_names;
+    std::vector<const char *> _output_node_names;
+    std::vector<float> _input_tensor_values;
+    std::vector<int64_t> _input_tensor_shape;
+
+public:
+    Yolov12(const std::string & file_path);
+    std::vector<Yolov12BBox> predict(cv::Mat & image);
+
+private:
+    void preprocess(cv::Mat & image);
+    void postprocess(std::vector<float> & tensor_0, std::vector<float> & tensor_1, const std::vector<int64_t> & shape_0, const std::vector<int64_t> & shape_1, std::vector<Yolov12BBox> & detected_boxes);
+};
