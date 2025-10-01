@@ -1,4 +1,4 @@
-﻿#include "SignalingServer.h"
+#include "SignalingServer.h"
 #include <iostream>
 #include <sstream>
 #include <random>
@@ -110,7 +110,7 @@ void SignalingServer::onMessage(std::shared_ptr<ix::ConnectionState> connectionS
                 return;
             }
 
-            std::string msg_type = json_msg.get("type", "").asString();
+            const std::string msg_type = json_msg.get("type", "").asString();
 
             if (msg_type == "auth") {
                 // Get weak_ptr from WebSocket reference
@@ -204,13 +204,13 @@ void SignalingServer::handleClientAuthentication(std::weak_ptr<ix::WebSocket> we
     std::cout << "Client authenticated: " << client_id << " (" << client_type << ")" << std::endl;
 }
 void SignalingServer::handleWebRTCSignaling(const std::string& client_id, const Json::Value& message) {
-    std::string msg_type = message.get("type", "").asString();
+    const std::string msg_type = message.get("type", "").asString();
     std::cout << "澶勭悊WebRTC淇′护娑堟伅: " << msg_type << " from " << client_id << std::endl;
 
-    if (video_analyzer_callback_) {
-        video_analyzer_callback_(client_id, message);
+    if (message_callback_) {
+        message_callback_(client_id, message);
     } else {
-        std::cerr << "璀﹀憡: video_analyzer_callback_ 鏈锟? << std::endl";
+        std::cerr << "璀﹀憡: message_callback_ 鏈锟? << std::endl";
     }
 }
 
@@ -218,8 +218,8 @@ void SignalingServer::handleControlMessage(const std::string& client_id, const J
     std::string action = message.get("action", "").asString();
     std::cout << "Control message from " << client_id << ": " << action << std::endl;
 
-    if (video_analyzer_callback_) {
-        video_analyzer_callback_(client_id, message);
+    if (message_callback_) {
+        message_callback_(client_id, message);
     }
 }
 
@@ -255,7 +255,7 @@ void SignalingServer::broadcastMessage(const Json::Value& message) {
     }
 }
 
-void SignalingServer::handleVideoAnalyzerMessage(const std::string& client_id, const Json::Value& message) {
+void SignalingServer::handleMessage(const std::string& client_id, const Json::Value& message) {
     sendToClient(client_id, message);
 }
 
@@ -272,7 +272,16 @@ size_t SignalingServer::getClientCount() const {
     return clients_.size();
 }
 
-void SignalingServer::setVideoAnalyzerCallback(std::function<void(const std::string&, const Json::Value&)> callback) {
-    video_analyzer_callback_ = callback;
+void SignalingServer::setMessageCallback(std::function<void(const std::string&, const Json::Value&)> callback) {
+    message_callback_ = std::move(callback);
 }
+
+
+
+
+
+
+
+
+
 

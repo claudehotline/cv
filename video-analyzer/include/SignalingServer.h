@@ -21,7 +21,7 @@ public:
     void stop();
 
     // 设置与视频分析模块的通信回调
-    void setVideoAnalyzerCallback(std::function<void(const std::string&, const Json::Value&)> callback);
+    void setMessageCallback(std::function<void(const std::string&, const Json::Value&)> callback);
 
     // 向特定客户端发送消息
     bool sendToClient(const std::string& client_id, const Json::Value& message);
@@ -30,7 +30,7 @@ public:
     void broadcastMessage(const Json::Value& message);
 
     // 处理来自视频分析模块的消息
-    void handleVideoAnalyzerMessage(const std::string& client_id, const Json::Value& message);
+    void handleMessage(const std::string& client_id, const Json::Value& message);
 
     bool isRunning() const { return running_; }
     size_t getClientCount() const;
@@ -53,7 +53,7 @@ private:
     std::map<std::weak_ptr<ix::WebSocket>, std::string, std::owner_less<std::weak_ptr<ix::WebSocket>>> connection_to_client_;
 
     // 与视频分析模块通信的回调
-    std::function<void(const std::string&, const Json::Value&)> video_analyzer_callback_;
+    std::function<void(const std::string&, const Json::Value&)> message_callback_;
 
     // WebSocket事件处理
     void onConnection(std::weak_ptr<ix::WebSocket> webSocket, std::shared_ptr<ix::ConnectionState> connectionState);

@@ -1,4 +1,0 @@
-{
-  "defaults": { "conf": 0.65, "iou": 0.45, "class_whitelist": [], "roi": null }
-}
-

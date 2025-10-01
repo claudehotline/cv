@@ -1,9 +1,83 @@
 #include "AnalysisAPI.h"
-#include <iostream>
-#include <sstream>
-#include "pipeline/Pipeline.h"
 
-AnalysisAPI::AnalysisAPI(VideoAnalyzer* analyzer) : video_analyzer_(analyzer) {
+#include <algorithm>
+#include <ctime>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+
+namespace {
+
+Json::Value modelToJson(const DetectionModelEntry& model, uint32_t active) {
+    Json::Value entry;
+    entry["id"] = model.id;
+    entry["task"] = model.task;
+    entry["family"] = model.family;
+    entry["variant"] = model.variant;
+    entry["type"] = model.type.empty() ? "onnx" : model.type;
+    entry["path"] = model.path;
+    entry["input_width"] = model.input_width;
+    entry["input_height"] = model.input_height;
+    entry["confidence_threshold"] = model.conf;
+    entry["nms_threshold"] = model.iou;
+    entry["active_pipelines"] = active;
+    return entry;
+}
+
+Json::Value profileToJson(const ProfileEntry& profile, const AppConfigPayload& app_config) {
+    Json::Value entry;
+    entry["name"] = profile.name;
+    entry["task"] = profile.task;
+    entry["model_id"] = profile.model_id;
+    entry["model_family"] = profile.model_family;
+    entry["model_variant"] = profile.model_variant;
+    entry["model_path"] = profile.model_path;
+    entry["input_width"] = profile.input_width;
+    entry["input_height"] = profile.input_height;
+    Json::Value encoder;
+    encoder["width"] = profile.enc_width;
+    encoder["height"] = profile.enc_height;
+    encoder["fps"] = profile.enc_fps;
+    encoder["bitrate_kbps"] = profile.enc_bitrate_kbps;
+    encoder["gop"] = profile.enc_gop;
+    encoder["bframes"] = profile.enc_bframes;
+    encoder["zero_latency"] = profile.enc_zero_latency;
+    if (!profile.enc_preset.empty()) encoder["preset"] = profile.enc_preset;
+    if (!profile.enc_tune.empty()) encoder["tune"] = profile.enc_tune;
+    if (!profile.enc_profile.empty()) encoder["profile"] = profile.enc_profile;
+    if (!profile.enc_codec.empty()) encoder["codec"] = profile.enc_codec;
+    entry["encoder"] = encoder;
+
+    Json::Value publish;
+    auto expand = [&](const std::string& templ) {
+        std::string result = templ;
+        auto replace_all = [](std::string& target, const std::string& from, const std::string& to) {
+            size_t pos = 0;
+            while ((pos = target.find(from, pos)) != std::string::npos) {
+                target.replace(pos, from.length(), to);
+                pos += to.length();
+            }
+        };
+        replace_all(result, "${whip_base}", app_config.sfu_whip_base);
+        replace_all(result, "${whep_base}", app_config.sfu_whep_base);
+        replace_all(result, "${stream}", "{stream}");
+        return result;
+    };
+    if (!profile.publish_whip_template.empty()) {
+        publish["whip"] = expand(profile.publish_whip_template);
+    }
+    if (!profile.publish_whep_template.empty()) {
+        publish["whep"] = expand(profile.publish_whep_template);
+    }
+    entry["publish"] = publish;
+
+    return entry;
+}
+
+} // namespace
+
+AnalysisAPI::AnalysisAPI(va::app::Application* app)
+    : app_(app) {
     http_server_ = std::make_unique<HTTPServer>();
     setupRoutes();
 }
@@ -13,22 +87,21 @@ AnalysisAPI::~AnalysisAPI() {
 }
 
 bool AnalysisAPI::start(int port) {
-    http_server_ = std::make_unique<HTTPServer>(port);
-    setupRoutes();
-
-    if (http_server_->start()) {
-        std::cout << "视频分析API服务已启动，端口: " << port << std::endl;
-        return true;
+    if (!app_) {
+        return false;
     }
 
-    std::cerr << "视频分析API服务启动失败" << std::endl;
+    http_server_ = std::make_unique<HTTPServer>(port);
+    setupRoutes();
+    if (http_server_->start()) {
+        return true;
+    }
     return false;
 }
 
 void AnalysisAPI::stop() {
     if (http_server_) {
         http_server_->stop();
-        std::cout << "视频分析API服务已停止" << std::endl;
     }
 }
 
@@ -37,438 +110,279 @@ bool AnalysisAPI::isRunning() const {
 }
 
 void AnalysisAPI::setupRoutes() {
-    if (!http_server_) return;
+    if (!http_server_) {
+        return;
+    }
 
-    auto appendContext = [](Json::Value& data, const StreamContextInfo& ctx) {
-        const char* state_str = "unknown";
-        switch (ctx.pipeline_state) {
-            case Pipeline::State::Idle: state_str = "idle"; break;
-            case Pipeline::State::Prewarming: state_str = "prewarming"; break;
-            case Pipeline::State::Running: state_str = "running"; break;
-            case Pipeline::State::Stopping: state_str = "stopping"; break;
-            default: break;
-        }
-        data["url"] = ctx.source_url;
-        data["model_id"] = ctx.model_id;
-        data["task"] = (ctx.task == AnalysisType::INSTANCE_SEGMENTATION) ? "seg" :
-                        (ctx.task == AnalysisType::POSE_ESTIMATION ? "pose" : "det");
-        data["ref_count"] = ctx.ref_count;
-        data["pipeline_state"] = state_str;
-        data["prewarm_success"] = ctx.prewarm_success;
-        data["last_frame_id"] = ctx.last_frame_id;
-        data["avg_latency_ms"] = ctx.avg_latency_ms;
-        data["fps"] = ctx.fps;
-    };
+    http_server_->GET("/api/models", [this](const HTTPServer::Request& req) {
+        return handleGetModels(req);
+    });
 
-    // 模型管理接口
-    http_server_->GET("/api/models", [this](const HTTPServer::Request& req) { return getModels(req); });
-    http_server_->POST("/api/models/load", [this](const HTTPServer::Request& req) { return loadModel(req); });
-    http_server_->POST("/api/models/unload", [this](const HTTPServer::Request& req) { return unloadModel(req); });
-    http_server_->GET("/api/models/:id", [this](const HTTPServer::Request& req) { return getModelInfo(req); });
+    http_server_->GET("/api/profiles", [this](const HTTPServer::Request& req) {
+        return handleGetProfiles(req);
+    });
 
-    // 分析控制接口
-    http_server_->POST("/api/analysis/start", [this](const HTTPServer::Request& req) { return startAnalysis(req); });
-    http_server_->POST("/api/analysis/stop", [this](const HTTPServer::Request& req) { return stopAnalysis(req); });
-    http_server_->GET("/api/analysis/status", [this](const HTTPServer::Request& req) { return getAnalysisStatus(req); });
-    http_server_->GET("/api/analysis/results", [this](const HTTPServer::Request& req) { return getAnalysisResults(req); });
-    http_server_->GET("/api/analysis/tasks", [this](const HTTPServer::Request& req) { return getAnalysisTasks(req); });
-
-    // 视频源管理（分析模块视角）
-    http_server_->GET("/api/sources", [this](const HTTPServer::Request& req) { return getAnalysisSources(req); });
-    http_server_->POST("/api/sources", [this](const HTTPServer::Request& req) { return addAnalysisSource(req); });
-    http_server_->DELETE("/api/sources/:id", [this](const HTTPServer::Request& req) { return removeAnalysisSource(req); });
-
-    // 系统监控
-    http_server_->GET("/api/system/info", [this](const HTTPServer::Request& req) { return getSystemInfo(req); });
-    http_server_->GET("/api/system/stats", [this](const HTTPServer::Request& req) { return getPerformanceStats(req); });
-
-    // Subscription (按需生产/回收) 与 动态切换（占位实现，M1逐步完善）
-    http_server_->POST("/api/subscribe", [this, appendContext](const HTTPServer::Request& req) {
-        try {
-            Json::Value body = HTTPServer::parseJsonBody(req.body);
-            std::string stream = body.get("stream", "").asString();
-            std::string profile = body.get("profile", "det_720p").asString();
-            std::string url = body.get("url", "").asString();
-            std::string model_id = body.get("model_id", "").asString();
-            std::string task = body.get("task", "det").asString();
-            auto toType = [](const std::string& t){ std::string s=t; for(auto& c:s) c=(char)tolower((unsigned char)c);
-                if (s=="det"||s=="object_detection") return AnalysisType::OBJECT_DETECTION; if (s=="seg"||s=="instance_segmentation") return AnalysisType::INSTANCE_SEGMENTATION; return AnalysisType::OBJECT_DETECTION; };
-            AnalysisType at = toType(task);
-
-            if (stream.empty()) return HTTPServer::errorResponse("缺少 stream", 400);
-            bool ok = video_analyzer_ && video_analyzer_->subscribeStream(stream, profile, url, model_id, at);
-            if (!ok) return HTTPServer::errorResponse("订阅失败", 500);
-            Json::Value data; data["stream"] = stream; data["profile"] = profile; data["status"] = "subscribed";
-            data["pipeline_state"] = "idle";
-            data["prewarm_success"] = false;
-            data["last_frame_id"] = 0;
-            data["avg_latency_ms"] = 0.0;
-            data["fps"] = 0.0;
-            if (auto ctx = video_analyzer_->getStreamContext(stream, profile)) {
-                appendContext(data, *ctx);
-            } else {
-                data["url"] = url;
-                data["model_id"] = model_id;
-                data["task"] = task;
-            }
-            data["whep"] = "";
-            return HTTPServer::jsonResponse(createSuccessResponse(data), 201);
-        } catch (const std::exception& e) { return HTTPServer::errorResponse(std::string("订阅失败: ")+e.what(), 400); }
+    http_server_->POST("/api/subscribe", [this](const HTTPServer::Request& req) {
+        return handleSubscribe(req);
     });
 
     http_server_->POST("/api/unsubscribe", [this](const HTTPServer::Request& req) {
-        try {
-            Json::Value body = HTTPServer::parseJsonBody(req.body);
-            std::string stream = body.get("stream", "").asString();
-            std::string profile = body.get("profile", "det_720p").asString();
-            if (stream.empty()) return HTTPServer::errorResponse("缺少 stream", 400);
-            if (video_analyzer_) video_analyzer_->unsubscribeStream(stream, profile);
-            Json::Value data; data["stream"] = stream; data["profile"] = profile; data["status"] = "unsubscribed";
-            return HTTPServer::jsonResponse(createSuccessResponse(data));
-        } catch (const std::exception& e) { return HTTPServer::errorResponse(std::string("退订失败: ")+e.what(), 400); }
+        return handleUnsubscribe(req);
     });
 
-    http_server_->POST("/api/source/switch", [this, appendContext](const HTTPServer::Request& req) {
-        try {
-            Json::Value body = HTTPServer::parseJsonBody(req.body);
-            std::string stream = body.get("stream", "").asString();
-            std::string profile = body.get("profile", "det_720p").asString();
-            std::string url = body.get("url", "").asString();
-            if (stream.empty() || url.empty()) return HTTPServer::errorResponse("缺少 stream/url", 400);
-            bool ok = video_analyzer_ && video_analyzer_->switchSourceFor(stream, profile, url);
-            if (!ok) return HTTPServer::errorResponse("切源失败", 500);
-            Json::Value data; data["stream"] = stream; data["profile"] = profile; data["status"] = "switched";
-            data["url"] = url;
-            data["pipeline_state"] = "idle";
-            data["prewarm_success"] = false;
-            data["last_frame_id"] = 0;
-            data["avg_latency_ms"] = 0.0;
-            data["fps"] = 0.0;
-            if (auto ctx = video_analyzer_->getStreamContext(stream, profile)) {
-                appendContext(data, *ctx);
-            }
-            return HTTPServer::jsonResponse(createSuccessResponse(data));
-        } catch (const std::exception& e) { return HTTPServer::errorResponse(std::string("切源失败: ")+e.what(), 400); }
+    http_server_->GET("/api/pipelines", [this](const HTTPServer::Request& req) {
+        return handlePipelines(req);
     });
 
-    http_server_->POST("/api/model/switch", [this, appendContext](const HTTPServer::Request& req) {
-        try {
-            Json::Value body = HTTPServer::parseJsonBody(req.body);
-            std::string stream = body.get("stream", "").asString();
-            std::string profile = body.get("profile", "det_720p").asString();
-            std::string model_id = body.get("model_id", "").asString();
-            if (model_id.empty()) return HTTPServer::errorResponse("缺少 model_id", 400);
-            bool ok = video_analyzer_ && video_analyzer_->switchModelFor(stream, profile, model_id);
-            if (!ok) return HTTPServer::errorResponse("切换模型失败", 500);
-            Json::Value data; data["stream"] = stream; data["profile"] = profile; data["status"] = "switched";
-            data["model_id"] = model_id;
-            data["pipeline_state"] = "idle";
-            data["prewarm_success"] = false;
-            data["last_frame_id"] = 0;
-            data["avg_latency_ms"] = 0.0;
-            data["fps"] = 0.0;
-            if (auto ctx = video_analyzer_->getStreamContext(stream, profile)) {
-                appendContext(data, *ctx);
-            }
-            return HTTPServer::jsonResponse(createSuccessResponse(data));
-        } catch (const std::exception& e) { return HTTPServer::errorResponse(std::string("切换模型失败: ")+e.what(), 400); }
+    // Legacy endpoints return 501 to indicate pending implementation
+    http_server_->POST("/api/models/load", [this](const HTTPServer::Request&) {
+        return notImplemented("models/load");
     });
-
-    http_server_->POST("/api/task/switch", [this, appendContext](const HTTPServer::Request& req) {
-        try {
-            Json::Value body = HTTPServer::parseJsonBody(req.body);
-            std::string stream = body.get("stream", "").asString();
-            std::string profile = body.get("profile", "det_720p").asString();
-            std::string task = body.get("task", "det").asString();
-            auto toType = [](const std::string& t){ std::string s=t; for(auto& c:s) c=(char)tolower((unsigned char)c);
-                if (s=="det"||s=="object_detection") return AnalysisType::OBJECT_DETECTION; if (s=="seg"||s=="instance_segmentation") return AnalysisType::INSTANCE_SEGMENTATION; return AnalysisType::OBJECT_DETECTION; };
-            AnalysisType at = toType(task);
-            bool ok = video_analyzer_ && video_analyzer_->switchTaskFor(stream, profile, at);
-            if (!ok) return HTTPServer::errorResponse("切换任务失败", 500);
-            Json::Value data; data["stream"] = stream; data["profile"] = profile; data["status"] = "switched";
-            data["task"] = task;
-            data["pipeline_state"] = "idle";
-            data["prewarm_success"] = false;
-            data["last_frame_id"] = 0;
-            data["avg_latency_ms"] = 0.0;
-            data["fps"] = 0.0;
-            if (auto ctx = video_analyzer_->getStreamContext(stream, profile)) {
-                appendContext(data, *ctx);
-            }
-            return HTTPServer::jsonResponse(createSuccessResponse(data));
-        } catch (const std::exception& e) { return HTTPServer::errorResponse(std::string("切换任务失败: ")+e.what(), 400); }
+    http_server_->POST("/api/models/unload", [this](const HTTPServer::Request&) {
+        return notImplemented("models/unload");
     });
-
-    http_server_->POST("/api/model/params", [this](const HTTPServer::Request& req) {
-        try {
-            // 占位：读取 conf/iou/class_whitelist/roi，暂不深入
-            Json::Value body = HTTPServer::parseJsonBody(req.body);
-            Json::Value data; data["status"] = "updated"; data["params"] = body;
-            return HTTPServer::jsonResponse(createSuccessResponse(data));
-        } catch (const std::exception& e) { return HTTPServer::errorResponse(std::string("更新模型参数失败: ")+e.what(), 400); }
+    http_server_->GET("/api/models/:id", [this](const HTTPServer::Request&) {
+        return notImplemented("models/:id");
     });
-
-    http_server_->POST("/api/engine/set", [this](const HTTPServer::Request& req) {
-        try {
-            Json::Value body = HTTPServer::parseJsonBody(req.body);
-            std::string engine = body.get("engine", "ort-cpu").asString();
-            int device = body.get("device", 0).asInt();
-            std::string tl = engine; for (auto& c : tl) c = (char)tolower((unsigned char)c);
-            if (video_analyzer_) {
-                if (tl.find("cuda") != std::string::npos) video_analyzer_->setInferenceDevice(InferenceDevice::CUDA, device);
-                else video_analyzer_->setInferenceDevice(InferenceDevice::CPU, 0);
-            }
-            Json::Value data; data["engine"] = engine; data["device"] = device; data["status"] = "accepted";
-            return HTTPServer::jsonResponse(createSuccessResponse(data));
-        } catch (const std::exception& e) { return HTTPServer::errorResponse(std::string("设置引擎失败: ")+e.what(), 400); }
+    http_server_->POST("/api/analysis/start", [this](const HTTPServer::Request&) {
+        return notImplemented("analysis/start");
     });
-
-    http_server_->GET("/api/pipelines", [this, appendContext](const HTTPServer::Request&) {
-        Json::Value arr(Json::arrayValue);
-        if (video_analyzer_) {
-            auto contexts = video_analyzer_->listStreamContexts();
-            for (const auto& ctx : contexts) {
-                Json::Value item;
-                appendContext(item, ctx);
-                item["stream"] = ctx.stream;
-                item["profile"] = ctx.profile;
-                arr.append(item);
-            }
-        }
-        return HTTPServer::jsonResponse(createSuccessResponse(arr));
+    http_server_->POST("/api/analysis/stop", [this](const HTTPServer::Request&) {
+        return notImplemented("analysis/stop");
+    });
+    http_server_->GET("/api/analysis/status", [this](const HTTPServer::Request&) {
+        return notImplemented("analysis/status");
+    });
+    http_server_->GET("/api/analysis/results", [this](const HTTPServer::Request&) {
+        return notImplemented("analysis/results");
+    });
+    http_server_->GET("/api/analysis/tasks", [this](const HTTPServer::Request&) {
+        return notImplemented("analysis/tasks");
+    });
+    http_server_->GET("/api/sources", [this](const HTTPServer::Request&) {
+        return notImplemented("sources");
+    });
+    http_server_->POST("/api/sources", [this](const HTTPServer::Request&) {
+        return notImplemented("sources:add");
+    });
+    http_server_->DELETE("/api/sources/:id", [this](const HTTPServer::Request&) {
+        return notImplemented("sources:remove");
+    });
+    http_server_->GET("/api/system/info", [this](const HTTPServer::Request& req) {
+        return handleSystemInfo(req);
+    });
+    http_server_->GET("/api/system/stats", [this](const HTTPServer::Request& req) {
+        return handleSystemStats(req);
     });
 }
 
-HTTPServer::Response AnalysisAPI::getModels(const HTTPServer::Request&) {
-    Json::Value result(Json::arrayValue);
+HTTPServer::Response AnalysisAPI::notImplemented(const std::string& feature) {
+    Json::Value payload;
+    payload["success"] = false;
+    payload["error"] = feature + " not implemented";
+    payload["timestamp"] = static_cast<int64_t>(std::time(nullptr));
+    return HTTPServer::jsonResponse(payload, 501);
+}
 
-    if (video_analyzer_) {
-        const auto& models = video_analyzer_->getDetectionModels();
-        const std::string current_id = video_analyzer_->getCurrentDetectionModelId();
-
-        for (const auto& model : models) {
-            Json::Value entry;
-            entry["id"] = model.id;
-            entry["name"] = model.name.empty() ? model.id : model.name;
-            entry["type"] = "object_detection";
-            entry["status"] = (model.id == current_id) ? "loaded" : "available";
-            entry["format"] = model.type.empty() ? "onnx" : model.type;
-            entry["confidence_threshold"] = model.confidence_threshold;
-            entry["nms_threshold"] = model.nms_threshold;
-
-            Json::Value input_size(Json::arrayValue);
-            if (model.input_width > 0 && model.input_height > 0) {
-                input_size.append(model.input_width);
-                input_size.append(model.input_height);
-            }
-            entry["input_size"] = input_size;
-
-            result.append(entry);
-        }
+HTTPServer::Response AnalysisAPI::handleGetModels(const HTTPServer::Request&) {
+    if (!app_) {
+        return HTTPServer::errorResponse("application not initialized", 500);
     }
 
-    return HTTPServer::jsonResponse(createSuccessResponse(result));
+    std::unordered_map<std::string, uint32_t> usage;
+    for (const auto& info : app_->pipelines()) {
+        usage[info.model_id]++;
+    }
+
+    Json::Value arr(Json::arrayValue);
+    for (const auto& model : app_->detectionModels()) {
+        const auto it = usage.find(model.id);
+        const uint32_t active = it != usage.end() ? it->second : 0;
+        arr.append(modelToJson(model, active));
+    }
+    return HTTPServer::jsonResponse(createSuccessResponse(arr));
 }
 
-HTTPServer::Response AnalysisAPI::loadModel(const HTTPServer::Request& req) {
+HTTPServer::Response AnalysisAPI::handleGetProfiles(const HTTPServer::Request&) {
+    if (!app_) {
+        return HTTPServer::errorResponse("application not initialized", 500);
+    }
+
+    Json::Value arr(Json::arrayValue);
+    const auto& cfg = app_->appConfig();
+    for (const auto& profile : app_->profiles()) {
+        arr.append(profileToJson(profile, cfg));
+    }
+    return HTTPServer::jsonResponse(createSuccessResponse(arr));
+}
+
+HTTPServer::Response AnalysisAPI::handleSubscribe(const HTTPServer::Request& req) {
+    if (!app_) {
+        return HTTPServer::errorResponse("application not initialized", 500);
+    }
+
+    Json::Value body;
     try {
-        Json::Value json_body = HTTPServer::parseJsonBody(req.body);
-        std::string model_id = json_body.get("model_id", "").asString();
-        std::string analysis_type = json_body.get("analysis_type", "object_detection").asString();
-        if (model_id.empty()) return HTTPServer::errorResponse("缺少模型ID", 400);
-
-        AnalysisType at = (analysis_type == "instance_segmentation") ? AnalysisType::INSTANCE_SEGMENTATION : AnalysisType::OBJECT_DETECTION;
-
-        // 切换到指定模型
-        if (video_analyzer_) {
-            if (!video_analyzer_->setCurrentModel(model_id, at)) {
-                return HTTPServer::errorResponse("模型切换失败: " + model_id, 500);
-            }
-        }
-
-        Json::Value result;
-        result["model_id"] = model_id;
-        result["status"] = "loaded";
-        result["message"] = "模型加载成功";
-        return HTTPServer::jsonResponse(createSuccessResponse(result));
+        body = HTTPServer::parseJsonBody(req.body);
     } catch (const std::exception& e) {
-        return HTTPServer::errorResponse(std::string("加载模型失败: ") + e.what(), 500);
+        return HTTPServer::errorResponse(std::string("invalid json: ") + e.what(), 400);
     }
+
+    const std::string stream = body.get("stream", "").asString();
+    const std::string profile = body.get("profile", "").asString();
+    const std::string uri = body.get("url", body.get("uri", "").asString()).asString();
+
+    if (stream.empty() || profile.empty() || uri.empty()) {
+        return HTTPServer::errorResponse("stream/profile/url required", 400);
+    }
+
+    auto key = app_->subscribeStream(stream, profile, uri);
+    if (!key) {
+        return HTTPServer::errorResponse("subscribe failed", 500);
+    }
+
+    Json::Value data;
+    data["stream"] = stream;
+    data["profile"] = profile;
+    data["pipeline_key"] = *key;
+    data["status"] = "subscribed";
+    return HTTPServer::jsonResponse(createSuccessResponse(data), 201);
 }
 
-HTTPServer::Response AnalysisAPI::unloadModel(const HTTPServer::Request& req) {
-    try {
-        Json::Value json_body = HTTPServer::parseJsonBody(req.body);
-        std::string model_id = json_body.get("model_id", "").asString();
-        if (model_id.empty()) return HTTPServer::errorResponse("缺少模型ID", 400);
+HTTPServer::Response AnalysisAPI::handleUnsubscribe(const HTTPServer::Request& req) {
+    if (!app_) {
+        return HTTPServer::errorResponse("application not initialized", 500);
+    }
 
-        Json::Value result;
-        result["model_id"] = model_id;
-        result["status"] = "unloaded";
-        result["message"] = "模型卸载成功";
-        return HTTPServer::jsonResponse(createSuccessResponse(result));
+    Json::Value body;
+    try {
+        body = HTTPServer::parseJsonBody(req.body);
     } catch (const std::exception& e) {
-        return HTTPServer::errorResponse(std::string("卸载模型失败: ") + e.what(), 500);
+        return HTTPServer::errorResponse(std::string("invalid json: ") + e.what(), 400);
     }
-}
 
-HTTPServer::Response AnalysisAPI::getModelInfo(const HTTPServer::Request& req) {
-    auto it = req.params.find("id");
-    if (it == req.params.end()) return HTTPServer::errorResponse("缺少模型ID", 400);
-    Json::Value result = modelInfoToJson(it->second);
-    return HTTPServer::jsonResponse(createSuccessResponse(result));
-}
+    const std::string stream = body.get("stream", "").asString();
+    const std::string profile = body.get("profile", "").asString();
 
-HTTPServer::Response AnalysisAPI::startAnalysis(const HTTPServer::Request& req) {
-    try {
-        Json::Value json_body = HTTPServer::parseJsonBody(req.body);
-        std::string source_id = json_body.get("source_id", "").asString();
-        std::string model_id = json_body.get("model_id", "").asString();
-        std::string analysis_type = json_body.get("analysis_type", "object_detection").asString();
-        if (source_id.empty()) return HTTPServer::errorResponse("缺少必要参数: source_id", 400);
-
-        // 只启用分析，不切换模型（模型切换应该通过 loadModel 接口进行）
-        if (video_analyzer_) {
-            video_analyzer_->setAnalysisEnabled(true);
-        }
-
-        Json::Value result;
-        result["task_id"] = "task_" + std::to_string(time(nullptr));
-        result["source_id"] = source_id;
-        result["model_id"] = model_id;
-        result["analysis_type"] = analysis_type;
-        result["status"] = "started";
-        result["message"] = "分析任务已启动";
-        return HTTPServer::jsonResponse(createSuccessResponse(result), 201);
-    } catch (const std::exception& e) { return HTTPServer::errorResponse(std::string("启动分析失败: ") + e.what(), 500); }
-}
-
-HTTPServer::Response AnalysisAPI::stopAnalysis(const HTTPServer::Request& req) {
-    try {
-        Json::Value json_body = HTTPServer::parseJsonBody(req.body);
-        std::string task_id = json_body.get("task_id", "").asString();
-        std::string source_id = json_body.get("source_id", "").asString();
-
-        // 支持通过task_id或source_id来停止分析
-        if (task_id.empty() && source_id.empty()) {
-            return HTTPServer::errorResponse("缺少任务ID或源ID", 400);
-        }
-
-        if (video_analyzer_) video_analyzer_->setAnalysisEnabled(false);
-
-        Json::Value result;
-        if (!task_id.empty()) result["task_id"] = task_id;
-        if (!source_id.empty()) result["source_id"] = source_id;
-        result["status"] = "stopped";
-        result["message"] = "分析任务已停止";
-        return HTTPServer::jsonResponse(createSuccessResponse(result));
-    } catch (const std::exception& e) { return HTTPServer::errorResponse(std::string("停止分析失败: ") + e.what(), 500); }
-}
-
-HTTPServer::Response AnalysisAPI::getAnalysisStatus(const HTTPServer::Request&) {
-    Json::Value result;
-    bool analysis_enabled = video_analyzer_ ? video_analyzer_->isAnalysisEnabled() : false;
-    result["total_tasks"] = analysis_enabled ? 1 : 0;
-    result["running_tasks"] = analysis_enabled ? 1 : 0;
-    result["completed_tasks"] = 5;
-    result["failed_tasks"] = 0;
-    result["avg_fps"] = 28.5;
-    result["total_frames_processed"] = 12450;
-    result["analysis_enabled"] = analysis_enabled;
-
-    // 添加任务列表，前端需要这个来判断当前源的分析状态
-    Json::Value tasks(Json::arrayValue);
-    if (analysis_enabled) {
-        Json::Value task;
-        task["task_id"] = "task_" + std::to_string(time(nullptr));
-        task["source_id"] = "camera_01";  // 当前活动的源
-        task["status"] = "running";
-        task["analysis_type"] = "object_detection";
-        tasks.append(task);
+    if (stream.empty() || profile.empty()) {
+        return HTTPServer::errorResponse("stream/profile required", 400);
     }
-    result["tasks"] = tasks;
 
-    return HTTPServer::jsonResponse(createSuccessResponse(result));
+    if (!app_->unsubscribeStream(stream, profile)) {
+        return HTTPServer::errorResponse("unsubscribe failed", 500);
+    }
+
+    Json::Value data;
+    data["stream"] = stream;
+    data["profile"] = profile;
+    data["status"] = "unsubscribed";
+    return HTTPServer::jsonResponse(createSuccessResponse(data));
 }
 
-HTTPServer::Response AnalysisAPI::getAnalysisResults(const HTTPServer::Request&) {
-    Json::Value result(Json::arrayValue);
-    Json::Value detection1; detection1["timestamp"] = static_cast<int64_t>(time(nullptr) - 10); detection1["task_id"] = "task_123"; detection1["frame_id"] = 1001; detection1["detections"] = Json::Value(Json::arrayValue);
-    Json::Value obj1; obj1["class"] = "person"; obj1["confidence"] = 0.92; obj1["bbox"] = Json::Value(Json::arrayValue); obj1["bbox"].append(100); obj1["bbox"].append(150); obj1["bbox"].append(80); obj1["bbox"].append(120); detection1["detections"].append(obj1);
-    result.append(detection1);
-    return HTTPServer::jsonResponse(createSuccessResponse(result));
+HTTPServer::Response AnalysisAPI::handlePipelines(const HTTPServer::Request&) {
+    if (!app_) {
+        return HTTPServer::errorResponse("application not initialized", 500);
+    }
+
+    Json::Value arr(Json::arrayValue);
+    for (const auto& info : app_->pipelines()) {
+        Json::Value item;
+        item["key"] = info.key;
+        item["stream"] = info.stream_id;
+        item["profile"] = info.profile_id;
+        item["source_uri"] = info.source_uri;
+        item["model_id"] = info.model_id;
+        item["task"] = info.task;
+        item["running"] = info.running;
+        item["last_active_ms"] = info.last_active_ms;
+        item["track_id"] = info.track_id;
+        item["metrics"]["fps"] = info.metrics.fps;
+        item["metrics"]["avg_latency_ms"] = info.metrics.avg_latency_ms;
+        item["metrics"]["last_processed_ms"] = info.metrics.last_processed_ms;
+        item["metrics"]["processed_frames"] = static_cast<Json::UInt64>(info.metrics.processed_frames);
+        item["metrics"]["dropped_frames"] = static_cast<Json::UInt64>(info.metrics.dropped_frames);
+        item["transport"]["connected"] = info.transport_stats.connected;
+        item["transport"]["packets"] = static_cast<Json::UInt64>(info.transport_stats.packets);
+        item["transport"]["bytes"] = static_cast<Json::UInt64>(info.transport_stats.bytes);
+        Json::Value encoder;
+        encoder["width"] = info.encoder_cfg.width;
+        encoder["height"] = info.encoder_cfg.height;
+        encoder["fps"] = info.encoder_cfg.fps;
+        encoder["bitrate_kbps"] = info.encoder_cfg.bitrate_kbps;
+        encoder["gop"] = info.encoder_cfg.gop;
+        encoder["bframes"] = info.encoder_cfg.bframes;
+        encoder["zero_latency"] = info.encoder_cfg.zero_latency;
+        if (!info.encoder_cfg.preset.empty()) encoder["preset"] = info.encoder_cfg.preset;
+        if (!info.encoder_cfg.tune.empty()) encoder["tune"] = info.encoder_cfg.tune;
+        if (!info.encoder_cfg.profile.empty()) encoder["profile"] = info.encoder_cfg.profile;
+        if (!info.encoder_cfg.codec.empty()) encoder["codec"] = info.encoder_cfg.codec;
+        item["encoder"] = encoder;
+        arr.append(item);
+    }
+
+    return HTTPServer::jsonResponse(createSuccessResponse(arr));
 }
 
-HTTPServer::Response AnalysisAPI::getAnalysisTasks(const HTTPServer::Request&) {
-    Json::Value result(Json::arrayValue);
-    Json::Value task1; task1["task_id"] = "task_123"; task1["source_id"] = "camera_01"; task1["model_id"] = "yolo-v5"; task1["analysis_type"] = "object_detection"; task1["status"] = "running"; task1["start_time"] = static_cast<int64_t>(time(nullptr) - 120);
-    result.append(task1);
-    return HTTPServer::jsonResponse(createSuccessResponse(result));
-}
+HTTPServer::Response AnalysisAPI::handleSystemInfo(const HTTPServer::Request&) {
+    if (!app_) {
+        return HTTPServer::errorResponse("application not initialized", 500);
+    }
 
-HTTPServer::Response AnalysisAPI::getAnalysisSources(const HTTPServer::Request&) {
-    Json::Value result(Json::arrayValue);
-    if (video_analyzer_) {
-        std::vector<std::string> source_ids = video_analyzer_->getRTSPSourceIds();
-        for (const auto& source_id : source_ids) {
-            Json::Value s;
-            s["id"] = source_id;
-            s["name"] = source_id;  // 添加name字段，使用source_id作为显示名称
-            s["type"] = "rtsp";
-            s["status"] = "active";
-            result.append(s);
+    Json::Value data;
+    const auto& cfg = app_->appConfig();
+    data["engine"]["type"] = cfg.engine.type;
+    data["engine"]["device"] = cfg.engine.device;
+    data["sfu"]["whip_base"] = cfg.sfu_whip_base;
+    data["sfu"]["whep_base"] = cfg.sfu_whep_base;
+    data["ffmpeg"]["enabled"] = app_->ffmpegEnabled();
+    data["models"]["total"] = static_cast<Json::UInt>(app_->detectionModels().size());
+    data["profiles"]["total"] = static_cast<Json::UInt>(app_->profiles().size());
+
+    auto pipeline_infos = app_->pipelines();
+    size_t running = 0;
+    for (const auto& info : pipeline_infos) {
+        if (info.running) {
+            running++;
         }
     }
-    return HTTPServer::jsonResponse(createSuccessResponse(result));
+    data["pipelines"]["total"] = static_cast<Json::UInt>(pipeline_infos.size());
+    data["pipelines"]["running"] = static_cast<Json::UInt>(running);
+
+    return HTTPServer::jsonResponse(createSuccessResponse(data));
 }
 
-HTTPServer::Response AnalysisAPI::addAnalysisSource(const HTTPServer::Request& req) {
-    try {
-        Json::Value body = HTTPServer::parseJsonBody(req.body);
-        Json::Value result; result["source_id"] = body.get("id", "").asString(); result["status"] = "added"; result["message"] = "分析视频源添加成功";
-        return HTTPServer::jsonResponse(createSuccessResponse(result), 201);
-    } catch (const std::exception& e) { return HTTPServer::errorResponse(std::string("添加分析视频源失败: ") + e.what(), 400); }
-}
-
-HTTPServer::Response AnalysisAPI::removeAnalysisSource(const HTTPServer::Request& req) {
-    auto it = req.params.find("id");
-    if (it == req.params.end()) return HTTPServer::errorResponse("缺少视频源ID", 400);
-    Json::Value result; result["source_id"] = it->second; result["status"] = "removed"; result["message"] = "分析视频源移除成功";
-    return HTTPServer::jsonResponse(createSuccessResponse(result));
-}
-
-HTTPServer::Response AnalysisAPI::getSystemInfo(const HTTPServer::Request&) {
-    Json::Value result; result["module"] = "video-analyzer"; result["version"] = "1.0.0"; result["status"] = "running"; result["uptime_seconds"] = 1800; result["active_sources"] = 1; result["running_tasks"] = 1; result["loaded_models"] = 2; result["gpu_enabled"] = true; result["gpu_memory_used_mb"] = 2048; result["gpu_utilization_percent"] = 65.2;
-    return HTTPServer::jsonResponse(createSuccessResponse(result));
-}
-
-HTTPServer::Response AnalysisAPI::getPerformanceStats(const HTTPServer::Request&) {
-    Json::Value result; result["cpu_usage_percent"] = 45.6; result["memory_usage_mb"] = 1024; result["gpu_usage_percent"] = 65.2; result["gpu_memory_mb"] = 2048; result["avg_inference_time_ms"] = 42.5; result["frames_per_second"] = 28.5; result["total_frames_processed"] = 125000; result["error_rate_percent"] = 0.02;
-    return HTTPServer::jsonResponse(createSuccessResponse(result));
-}
-
-Json::Value AnalysisAPI::modelInfoToJson(const std::string& model_id) {
-    Json::Value json; json["id"] = model_id; json["name"] = "YOLOv5 Object Detection"; json["type"] = "object_detection"; json["status"] = "loaded"; json["format"] = "onnx"; json["path"] = "/models/" + model_id + ".onnx"; json["size_bytes"] = 14336000; json["accuracy"] = 0.89; json["inference_time_ms"] = 45; json["classes"] = Json::Value(Json::arrayValue); json["classes"].append("person"); json["classes"].append("car"); json["classes"].append("truck");
-    return json;
-}
-
-Json::Value AnalysisAPI::analysisResultToJson(const std::map<std::string, cv::Rect>& result) {
-    Json::Value json(Json::arrayValue);
-    for (const auto& detection : result) {
-        Json::Value obj; obj["class"] = detection.first; obj["bbox"]["x"] = detection.second.x; obj["bbox"]["y"] = detection.second.y; obj["bbox"]["width"] = detection.second.width; obj["bbox"]["height"] = detection.second.height; json.append(obj);
+HTTPServer::Response AnalysisAPI::handleSystemStats(const HTTPServer::Request&) {
+    if (!app_) {
+        return HTTPServer::errorResponse("application not initialized", 500);
     }
-    return json;
-}
 
-Json::Value AnalysisAPI::analysisTaskToJson(const std::string& task_id) {
-    Json::Value json; json["task_id"] = task_id; json["source_id"] = "camera_01"; json["model_id"] = "yolo-v5"; json["status"] = "running"; json["start_time"] = static_cast<int64_t>(time(nullptr)); json["frames_processed"] = 1000; json["avg_fps"] = 30.0;
-    return json;
+    const auto stats = app_->systemStats();
+    Json::Value data;
+    data["pipelines"]["total"] = static_cast<Json::UInt>(stats.total_pipelines);
+    data["pipelines"]["running"] = static_cast<Json::UInt>(stats.running_pipelines);
+    data["metrics"]["aggregate_fps"] = stats.aggregate_fps;
+    data["metrics"]["processed_frames"] = static_cast<Json::UInt64>(stats.processed_frames);
+    data["metrics"]["dropped_frames"] = static_cast<Json::UInt64>(stats.dropped_frames);
+    data["transport"]["packets"] = static_cast<Json::UInt64>(stats.transport_packets);
+    data["transport"]["bytes"] = static_cast<Json::UInt64>(stats.transport_bytes);
+
+    return HTTPServer::jsonResponse(createSuccessResponse(data));
 }
 
 Json::Value AnalysisAPI::createSuccessResponse(const Json::Value& data) {
-    Json::Value response; response["success"] = true; response["timestamp"] = static_cast<int64_t>(time(nullptr)); if (!data.isNull()) { response["data"] = data; } return response;
+    Json::Value response;
+    response["success"] = true;
+    response["timestamp"] = static_cast<int64_t>(std::time(nullptr));
+    if (!data.isNull()) {
+        response["data"] = data;
+    }
+    return response;
 }
 
 Json::Value AnalysisAPI::createErrorResponse(const std::string& message) {
-    Json::Value response; response["success"] = false; response["message"] = message; response["timestamp"] = static_cast<int64_t>(time(nullptr)); return response;
+    Json::Value response;
+    response["success"] = false;
+    response["error"] = message;
+    response["timestamp"] = static_cast<int64_t>(std::time(nullptr));
+    return response;
 }

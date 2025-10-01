@@ -402,8 +402,13 @@ const onAnalysisTypeChange = (analysisType: string) => {
   videoStore.setSelectedAnalysisType(analysisType)
 }
 
-const onModelChange = (modelId: string) => {
-  videoStore.setSelectedModel(modelId)
+const onModelChange = async (modelId: string) => {
+  try {
+    await videoStore.setSelectedModel(modelId)
+  } catch (error) {
+    console.error('切换模型失败:', error)
+    ElMessage.error('切换模型失败')
+  }
 }
 
 // WebRTC相关方法

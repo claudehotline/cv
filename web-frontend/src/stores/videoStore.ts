@@ -3,7 +3,22 @@ import { ref, computed } from 'vue'
 import type { VideoSource, AnalysisResult, AnalysisType } from '@/types'
 import { WebRTCClient, type WebRTCConfig } from '@/utils/webrtc'
 
-// 模型信息接口
+const API_BASE = '/api'
+const PROFILE_BY_ANALYSIS_TYPE: Record<string, string> = {
+  object_detection: 'det_720p',
+  instance_segmentation: 'seg_720p'
+}
+const DEFAULT_STREAM_URL = 'rtsp://127.0.0.1:8554/camera_01'
+const DEFAULT_VIDEO_SOURCE: VideoSource = {
+  id: 'camera_01',
+  name: 'Camera 01',
+  type: 'stream',
+  url: DEFAULT_STREAM_URL,
+  status: 'inactive',
+  fps: 0,
+  resolution: '1280x720'
+}
+
 interface ModelInfo {
   id: string
   name: string
@@ -14,32 +29,31 @@ interface ModelInfo {
 
 export const useVideoStore = defineStore('video', () => {
   // 状态
-  const videoSources = ref<VideoSource[]>([])
+  const videoSources = ref<VideoSource[]>([{ ...DEFAULT_VIDEO_SOURCE }])
   const analysisResults = ref<AnalysisResult[]>([])
   const analysisTypes = ref<AnalysisType[]>([
     { id: 'object_detection', name: '目标检测', enabled: true },
     { id: 'instance_segmentation', name: '实例分割', enabled: false }
   ])
 
-  const selectedSourceId = ref<string>('')
+  const selectedSourceId = ref<string>(DEFAULT_VIDEO_SOURCE.id)
   const selectedAnalysisType = ref<string>('object_detection')
 
-  // 模型相关状态
+  // 模型状态
   const availableModels = ref<ModelInfo[]>([])
   const selectedModelId = ref<string>('')
-  const isAnalyzing = ref(true)
+  const isAnalyzing = ref(false)
 
-  const wsConnection = ref<WebSocket | null>(null)
   const connectionStatus = ref<'connecting' | 'connected' | 'disconnected'>('disconnected')
 
-  // WebRTC相关状态
+  // WebRTC 状态
   const webrtcClient = ref<WebRTCClient | null>(null)
   const webrtcConnected = ref(false)
   const videoStream = ref<MediaStream | null>(null)
   const currentVideoElement = ref<HTMLVideoElement | null>(null)
 
-  // JPEG视频播放器状态
-  const jpegVideoPlayer = ref<any>(null) // JpegVideoPlayer组件引用
+  // JPEG 视频播放状态
+  const jpegVideoPlayer = ref<any>(null)
   const lastFrameTimestamp = ref(0)
   const frameLatency = ref(0)
 
@@ -49,7 +63,7 @@ export const useVideoStore = defineStore('video', () => {
   )
 
   const selectedSource = computed(() =>
-    videoSources.value.find(source => source.id === selectedSourceId.value)
+    videoSources.value.find(source => source.id === selectedSourceId.value) || null
   )
 
   const recentAnalysisResults = computed(() =>
@@ -59,16 +73,14 @@ export const useVideoStore = defineStore('video', () => {
       .slice(0, 10)
   )
 
-  // 根据选中的分析类型过滤模型
   const filteredModels = computed(() =>
     availableModels.value.filter(model => model.type === selectedAnalysisType.value)
   )
 
-  // 方法
+  // 简单的 WebSocket 模拟（保留调试输出）
   const connectWebSocket = () => {
-    // 简化实现：直接设置为已连接，因为后端没有实现控制WebSocket
     connectionStatus.value = 'connected'
-    console.log('模拟WebSocket连接已建立')
+    console.log('[videoStore] mock websocket connected')
   }
 
   const handleWebSocketMessage = (message: any) => {
@@ -76,25 +88,20 @@ export const useVideoStore = defineStore('video', () => {
       case 'video_sources_update':
         videoSources.value = message.data
         break
-
       case 'analysis_result':
         analysisResults.value.unshift(message.data)
-        // 保持最多1000个结果
         if (analysisResults.value.length > 1000) {
           analysisResults.value = analysisResults.value.slice(0, 1000)
         }
         break
-
       case 'status_update':
         updateVideoSourceStatus(message.source_id, message.data.status)
         break
-
       case 'error':
-        console.error('系统错误:', message.data)
+        console.error('[videoStore] backend error:', message.data)
         break
-
       default:
-        console.log('未知消息类型:', message)
+        console.log('[videoStore] unknown ws message:', message)
     }
   }
 
@@ -112,14 +119,14 @@ export const useVideoStore = defineStore('video', () => {
       status: 'active'
     }
     videoSources.value.push(newSource)
-    console.log('添加视频源:', newSource.name)
+    console.log('[videoStore] added source', newSource.name)
   }
 
   const updateVideoSource = (source: VideoSource) => {
     const index = videoSources.value.findIndex(s => s.id === source.id)
     if (index > -1) {
       videoSources.value[index] = source
-      console.log('更新视频源:', source.name)
+      console.log('[videoStore] updated source', source.name)
     }
   }
 
@@ -127,116 +134,7 @@ export const useVideoStore = defineStore('video', () => {
     const index = videoSources.value.findIndex(s => s.id === sourceId)
     if (index > -1) {
       videoSources.value.splice(index, 1)
-
-      // 发送到后端
-      if (wsConnection.value && wsConnection.value.readyState === WebSocket.OPEN) {
-        wsConnection.value.send(JSON.stringify({
-          type: 'remove_video_source',
-          data: { source_id: sourceId }
-        }))
-      }
-    }
-  }
-
-  const setSelectedModel = (modelId: string) => {
-    selectedModelId.value = modelId
-  }
-
-  const getAnalysisStatus = async () => {
-    // 简化实现：返回当前状态
-    return {
-      isAnalyzing: isAnalyzing.value,
-      selectedSourceId: selectedSourceId.value,
-      selectedModelId: selectedModelId.value
-    }
-  }
-
-  const startAnalysis = async (sourceId: string, analysisType: string) => {
-    console.log('开始分析:', sourceId, analysisType, 'model_id:', selectedModelId.value)
-
-    try {
-      // 确保有选中的模型ID
-      if (!selectedModelId.value) {
-        throw new Error('请先选择一个模型')
-      }
-
-      // 通过HTTP API发送启用检测框绘制的请求
-      const response = await fetch('/api/analyzer/analysis/start', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          source_id: sourceId,
-          model_id: selectedModelId.value,
-          analysis_type: analysisType
-        })
-      })
-
-      console.log('API响应状态:', response.status, response.statusText)
-
-      // 检查响应是否为空
-      const text = await response.text()
-      console.log('API响应内容:', text)
-
-      if (!text) {
-        throw new Error('服务器返回空响应')
-      }
-
-      const data = JSON.parse(text)
-      if (data.success) {
-        isAnalyzing.value = true
-        console.log('✅ 启用分析成功')
-        // 如果WebRTC未连接，请求视频流
-        if (!webrtcConnected.value) {
-          requestVideoStream()
-        }
-      } else {
-        console.error('❌ 启用分析失败:', data.message)
-        throw new Error(data.message || '启用分析失败')
-      }
-    } catch (error) {
-      console.error('❌ 启用分析请求失败:', error)
-      throw error
-    }
-  }
-
-  const stopAnalysis = async (sourceId: string) => {
-    console.log('停止分析:', sourceId)
-
-    try {
-      // 通过HTTP API发送禁用检测框绘制的请求
-      const response = await fetch('/api/analyzer/analysis/stop', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          source_id: sourceId
-        })
-      })
-
-      console.log('API响应状态:', response.status, response.statusText)
-
-      // 检查响应是否为空
-      const text = await response.text()
-      console.log('API响应内容:', text)
-
-      if (!text) {
-        throw new Error('服务器返回空响应')
-      }
-
-      const data = JSON.parse(text)
-      if (data.success) {
-        isAnalyzing.value = false
-        console.log('✅ 停止分析成功')
-      } else {
-        console.error('❌ 停止分析失败:', data.message)
-        throw new Error(data.message || '停止分析失败')
-      }
-    } catch (error) {
-      console.error('❌ 停止分析请求失败:', error)
-      throw error
+      console.log('[videoStore] removed source', sourceId)
     }
   }
 
@@ -244,41 +142,208 @@ export const useVideoStore = defineStore('video', () => {
     selectedSourceId.value = sourceId
   }
 
-  const setSelectedAnalysisType = (analysisType: string) => {
-    selectedAnalysisType.value = analysisType
+  const setSelectedAnalysisType = (type: string) => {
+    selectedAnalysisType.value = type
+    if (filteredModels.value.length > 0) {
+      selectedModelId.value = filteredModels.value[0].id
+    }
   }
 
-  // WebRTC相关方法
+  const setSelectedModel = async (modelId: string) => {
+    selectedModelId.value = modelId
+    try {
+      await apiRequest('/models/load', {
+        method: 'POST',
+        body: JSON.stringify({ model_id: modelId })
+      })
+      await fetchModels()
+    } catch (error) {
+      console.error('[videoStore] failed to load model:', error)
+    }
+  }
+
+  const getAnalysisStatus = async () => ({
+    isAnalyzing: isAnalyzing.value,
+    selectedSourceId: selectedSourceId.value,
+    selectedModelId: selectedModelId.value
+  })
+
+  const mapModelToInfo = (model: any): ModelInfo => {
+    const nameParts = [model.family, model.variant].filter(Boolean)
+    const displayName = nameParts.length ? nameParts.join(' / ') : model.id
+    const taskType = model.task === 'seg' ? 'instance_segmentation' : 'object_detection'
+    return {
+      id: model.id,
+      name: displayName,
+      type: taskType,
+      status: model.active_pipelines > 0 ? 'loaded' : 'available',
+      description: model.path
+    }
+  }
+
+  const updateAnalysisTypeAvailability = () => {
+    const hasDetection = availableModels.value.some(m => m.type === 'object_detection')
+    const hasSegmentation = availableModels.value.some(m => m.type === 'instance_segmentation')
+    analysisTypes.value = analysisTypes.value.map(type => {
+      if (type.id === 'object_detection') {
+        return { ...type, enabled: hasDetection }
+      }
+      if (type.id === 'instance_segmentation') {
+        return { ...type, enabled: hasSegmentation }
+      }
+      return type
+    })
+  }
+
+  const fetchModels = async () => {
+    try {
+      const data = await apiRequest<any[]>('/models')
+      const list = Array.isArray(data) ? data : []
+      availableModels.value = list.map(mapModelToInfo)
+      updateAnalysisTypeAvailability()
+
+      if (!selectedModelId.value && availableModels.value.length > 0) {
+        const preferred = availableModels.value.find(model => model.type === selectedAnalysisType.value)
+        selectedModelId.value = (preferred || availableModels.value[0]).id
+      }
+    } catch (error) {
+      console.error('[videoStore] failed to fetch models:', error)
+    }
+  }
+
+  const mergePipelinesWithDefaults = (pipelines: any[]): VideoSource[] => {
+    const map = new Map<string, VideoSource>()
+    map.set(DEFAULT_VIDEO_SOURCE.id, { ...DEFAULT_VIDEO_SOURCE })
+
+    pipelines.forEach(item => {
+      const existing = map.get(item.stream) || {
+        id: item.stream,
+        name: item.stream,
+        type: 'stream',
+        url: item.source_uri || DEFAULT_STREAM_URL,
+        status: 'inactive' as VideoSource['status'],
+        fps: 0,
+        resolution: '1280x720'
+      }
+
+      existing.status = item.running ? 'active' : 'inactive'
+      existing.url = item.source_uri || existing.url
+      const width = item.encoder?.width || DEFAULT_VIDEO_SOURCE.resolution.split('x')[0]
+      const height = item.encoder?.height || DEFAULT_VIDEO_SOURCE.resolution.split('x')[1]
+      existing.resolution = `${width}x${height}`
+      existing.fps = Number(item.metrics?.fps || existing.fps || 0)
+
+      map.set(existing.id, existing)
+    })
+
+    return Array.from(map.values())
+  }
+
+  const fetchVideoSources = async () => {
+    try {
+      const data = await apiRequest<any[]>('/pipelines')
+      const list = Array.isArray(data) ? data : []
+      videoSources.value = mergePipelinesWithDefaults(list)
+
+      if (videoSources.value.length > 0 && !selectedSourceId.value) {
+        selectedSourceId.value = videoSources.value[0].id
+      }
+
+      isAnalyzing.value = videoSources.value.some(source => source.status === 'active')
+    } catch (error) {
+      console.error('[videoStore] failed to fetch pipelines:', error)
+      videoSources.value = [{ ...DEFAULT_VIDEO_SOURCE }]
+      isAnalyzing.value = false
+    }
+  }
+
+  const startAnalysis = async (sourceId: string, analysisType: string) => {
+    console.log('[videoStore] start analysis', sourceId, analysisType, 'model:', selectedModelId.value)
+
+    const targetSourceId = sourceId || selectedSourceId.value
+    if (!targetSourceId) {
+      throw new Error('请选择一个视频源')
+    }
+
+    const profile = PROFILE_BY_ANALYSIS_TYPE[analysisType] ?? PROFILE_BY_ANALYSIS_TYPE.object_detection
+    if (!profile) {
+      throw new Error('当前分析类型尚未配置 profile')
+    }
+
+    if (!selectedModelId.value) {
+      throw new Error('请先选择一个模型')
+    }
+
+    const source = videoSources.value.find(s => s.id === targetSourceId) || DEFAULT_VIDEO_SOURCE
+
+    await apiRequest('/subscribe', {
+      method: 'POST',
+      body: JSON.stringify({
+        stream: targetSourceId,
+        profile,
+        url: source.url || DEFAULT_STREAM_URL,
+        model_id: selectedModelId.value
+      })
+    })
+
+    isAnalyzing.value = true
+    await fetchVideoSources()
+
+    if (!webrtcConnected.value) {
+      requestVideoStream()
+    }
+  }
+
+  const stopAnalysis = async (sourceId: string) => {
+    console.log('[videoStore] stop analysis', sourceId)
+
+    const targetSourceId = sourceId || selectedSourceId.value
+    if (!targetSourceId) {
+      throw new Error('请选择一个视频源')
+    }
+
+    const profile = PROFILE_BY_ANALYSIS_TYPE[selectedAnalysisType.value] ?? PROFILE_BY_ANALYSIS_TYPE.object_detection
+
+    await apiRequest('/unsubscribe', {
+      method: 'POST',
+      body: JSON.stringify({
+        stream: targetSourceId,
+        profile
+      })
+    })
+
+    isAnalyzing.value = false
+    await fetchVideoSources()
+  }
+
   const initWebRTC = () => {
     const config: WebRTCConfig = {
       signalingServerUrl: 'ws://localhost:8083',
-      stunServers: []  // 纯本地连接，不使用STUN/TURN
+      stunServers: [
+        'stun:stun.l.google.com:19302',
+        'stun:stun1.l.google.com:19302'
+      ]
     }
 
     webrtcClient.value = new WebRTCClient(config)
-
     webrtcClient.value.setEventHandlers({
       onConnected: () => {
         webrtcConnected.value = true
-        console.log('WebRTC连接建立')
+        console.log('[videoStore] WebRTC connected')
       },
       onDisconnected: () => {
         webrtcConnected.value = false
         videoStream.value = null
-        console.log('WebRTC连接断开')
+        console.log('[videoStore] WebRTC disconnected')
       },
       onVideoStream: (stream: MediaStream) => {
         videoStream.value = stream
         if (currentVideoElement.value) {
           currentVideoElement.value.srcObject = stream
         }
-        console.log('接收到视频流')
-      },
-      onJpegFrame: (jpegData: ArrayBuffer) => {
-        handleJpegFrame(jpegData)
       },
       onError: (error: string) => {
-        console.error('WebRTC错误:', error)
+        console.error('[videoStore] WebRTC error:', error)
       }
     })
   }
@@ -289,12 +354,9 @@ export const useVideoStore = defineStore('video', () => {
     }
 
     try {
-      const success = await webrtcClient.value?.connect()
-      if (success) {
-        console.log('WebRTC信令连接成功')
-      }
+      await webrtcClient.value?.connect()
     } catch (error) {
-      console.error('WebRTC连接失败:', error)
+      console.error('[videoStore] WebRTC connect failed:', error)
     }
   }
 
@@ -306,104 +368,50 @@ export const useVideoStore = defineStore('video', () => {
   }
 
   const setVideoElement = (element: HTMLVideoElement) => {
-    console.log('📹 videoStore.setVideoElement被调用, element:', element)
     currentVideoElement.value = element
     if (webrtcClient.value) {
-      console.log('✅ webrtcClient存在，正在设置视频元素')
       webrtcClient.value.setVideoElement(element)
-    } else {
-      console.log('⚠️ webrtcClient不存在，无法设置视频元素')
     }
   }
 
   const requestVideoStream = () => {
-    console.log('🎬 requestVideoStream被调用, selectedSourceId:', selectedSourceId.value)
     if (webrtcClient.value && selectedSourceId.value) {
       webrtcClient.value.requestVideoStream(selectedSourceId.value)
-    } else {
-      console.warn('⚠️ 无法请求视频流 - webrtcClient:', !!webrtcClient.value, 'selectedSourceId:', selectedSourceId.value)
     }
   }
 
-  // JPEG视频播放器相关方法
   const setJpegVideoPlayer = (player: any) => {
     jpegVideoPlayer.value = player
-    console.log('🎬 设置JPEG视频播放器:', !!player)
   }
 
   const handleJpegFrame = (jpegData: ArrayBuffer) => {
-    const currentTime = performance.now()
-
-    // 计算延迟
+    const now = performance.now()
     if (lastFrameTimestamp.value > 0) {
-      frameLatency.value = currentTime - lastFrameTimestamp.value
+      frameLatency.value = now - lastFrameTimestamp.value
     }
-    lastFrameTimestamp.value = currentTime
+    lastFrameTimestamp.value = now
 
-    // 发送到JPEG播放器
     if (jpegVideoPlayer.value) {
       jpegVideoPlayer.value.displayJpegFrame(jpegData)
       jpegVideoPlayer.value.updateLatency(frameLatency.value)
 
-      // 更新分析结果（如果有）
-      const recentResult = recentAnalysisResults.value[0]
-      if (recentResult) {
-        jpegVideoPlayer.value.updateDetections(recentResult.detections || [])
+      const latest = recentAnalysisResults.value[0]
+      if (latest) {
+        jpegVideoPlayer.value.updateDetections(latest.detections || [])
       }
-    } else {
-      console.warn('⚠️ JPEG视频播放器未设置')
     }
   }
 
-  // 从后端获取模型列表
-  const fetchModels = async () => {
-    try {
-      const response = await fetch('/api/analyzer/models')
-      const data = await response.json()
-      if (data.success && data.data) {
-        availableModels.value = data.data
-        if (availableModels.value.length > 0 && !selectedModelId.value) {
-          selectedModelId.value = availableModels.value[0].id
-        }
-      }
-    } catch (error) {
-      console.error('获取模型列表失败:', error)
-    }
-  }
-
-  // 从后端获取视频源列表
-  const fetchVideoSources = async () => {
-    try {
-      const response = await fetch('/api/analyzer/sources')
-      const data = await response.json()
-      if (data.success && data.data) {
-        videoSources.value = data.data
-        if (videoSources.value.length > 0 && !selectedSourceId.value) {
-          selectedSourceId.value = videoSources.value[0].id
-        }
-      }
-    } catch (error) {
-      console.error('获取视频源列表失败:', error)
-    }
-  }
-
-  // 初始化
   const init = async () => {
-    // 初始化WebSocket用于控制命令，WebRTC用于视频流
-    console.log('🚀 videoStore.init() - 开始初始化')
     connectWebSocket()
-    console.log('🎯 正在连接WebRTC...')
     connectWebRTC()
 
-    // 从后端获取视频源列表
-    console.log('📹 正在获取视频源列表...')
     await fetchVideoSources()
-
-    // 从后端获取模型列表
-    console.log('📦 正在获取模型列表...')
     await fetchModels()
 
-    console.log('✅ videoStore.init() - 初始化完成')
+    if (!selectedModelId.value && filteredModels.value.length > 0) {
+      selectedModelId.value = filteredModels.value[0].id
+    }
   }
 
   return {
@@ -415,12 +423,12 @@ export const useVideoStore = defineStore('video', () => {
     selectedAnalysisType,
     connectionStatus,
 
-    // 模型相关状态
+    // 模型状态
     availableModels,
     selectedModelId,
     isAnalyzing,
 
-    // WebRTC状态
+    // WebRTC 状态
     webrtcConnected,
     videoStream,
     currentVideoElement,
@@ -431,8 +439,9 @@ export const useVideoStore = defineStore('video', () => {
     recentAnalysisResults,
     filteredModels,
 
-    // 方法
+    // 操作
     connectWebSocket,
+    handleWebSocketMessage,
     addVideoSource,
     updateVideoSource,
     removeVideoSource,
@@ -445,16 +454,47 @@ export const useVideoStore = defineStore('video', () => {
     fetchModels,
     fetchVideoSources,
 
-    // WebRTC方法
+    // WebRTC 操作
     connectWebRTC,
     disconnectWebRTC,
     setVideoElement,
     requestVideoStream,
 
-    // JPEG播放器方法
+    // JPEG 播放
     setJpegVideoPlayer,
     handleJpegFrame,
 
     init
   }
 })
+
+async function apiRequest<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+  const init: RequestInit = { ...options }
+  const headers: Record<string, string> = {}
+  if (options.headers) {
+    Object.assign(headers, options.headers as Record<string, string>)
+  }
+  if (init.body && !('Content-Type' in headers)) {
+    headers['Content-Type'] = 'application/json'
+  }
+  if (Object.keys(headers).length > 0) {
+    init.headers = headers
+  }
+
+  const response = await fetch(`${API_BASE}${path}`, init)
+  const json = await response.json().catch(() => null)
+
+  if (!response.ok) {
+    const message = json?.error || json?.message || response.statusText
+    throw new Error(message || 'Request failed')
+  }
+
+  if (json && json.success === false) {
+    throw new Error(json.error || json.message || 'Request failed')
+  }
+
+  if (json && Object.prototype.hasOwnProperty.call(json, 'data')) {
+    return json.data as T
+  }
+  return json as T
+}
