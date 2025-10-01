@@ -1,6 +1,7 @@
 #include "AnalysisAPI.h"
 #include <iostream>
 #include <sstream>
+#include "pipeline/Pipeline.h"
 
 AnalysisAPI::AnalysisAPI(VideoAnalyzer* analyzer) : video_analyzer_(analyzer) {
     http_server_ = std::make_unique<HTTPServer>();
@@ -38,6 +39,27 @@ bool AnalysisAPI::isRunning() const {
 void AnalysisAPI::setupRoutes() {
     if (!http_server_) return;
 
+    auto appendContext = [](Json::Value& data, const StreamContextInfo& ctx) {
+        const char* state_str = "unknown";
+        switch (ctx.pipeline_state) {
+            case Pipeline::State::Idle: state_str = "idle"; break;
+            case Pipeline::State::Prewarming: state_str = "prewarming"; break;
+            case Pipeline::State::Running: state_str = "running"; break;
+            case Pipeline::State::Stopping: state_str = "stopping"; break;
+            default: break;
+        }
+        data["url"] = ctx.source_url;
+        data["model_id"] = ctx.model_id;
+        data["task"] = (ctx.task == AnalysisType::INSTANCE_SEGMENTATION) ? "seg" :
+                        (ctx.task == AnalysisType::POSE_ESTIMATION ? "pose" : "det");
+        data["ref_count"] = ctx.ref_count;
+        data["pipeline_state"] = state_str;
+        data["prewarm_success"] = ctx.prewarm_success;
+        data["last_frame_id"] = ctx.last_frame_id;
+        data["avg_latency_ms"] = ctx.avg_latency_ms;
+        data["fps"] = ctx.fps;
+    };
+
     // 模型管理接口
     http_server_->GET("/api/models", [this](const HTTPServer::Request& req) { return getModels(req); });
     http_server_->POST("/api/models/load", [this](const HTTPServer::Request& req) { return loadModel(req); });
@@ -61,7 +83,7 @@ void AnalysisAPI::setupRoutes() {
     http_server_->GET("/api/system/stats", [this](const HTTPServer::Request& req) { return getPerformanceStats(req); });
 
     // Subscription (按需生产/回收) 与 动态切换（占位实现，M1逐步完善）
-    http_server_->POST("/api/subscribe", [this](const HTTPServer::Request& req) {
+    http_server_->POST("/api/subscribe", [this, appendContext](const HTTPServer::Request& req) {
         try {
             Json::Value body = HTTPServer::parseJsonBody(req.body);
             std::string stream = body.get("stream", "").asString();
@@ -77,11 +99,13 @@ void AnalysisAPI::setupRoutes() {
             bool ok = video_analyzer_ && video_analyzer_->subscribeStream(stream, profile, url, model_id, at);
             if (!ok) return HTTPServer::errorResponse("订阅失败", 500);
             Json::Value data; data["stream"] = stream; data["profile"] = profile; data["status"] = "subscribed";
+            data["pipeline_state"] = "idle";
+            data["prewarm_success"] = false;
+            data["last_frame_id"] = 0;
+            data["avg_latency_ms"] = 0.0;
+            data["fps"] = 0.0;
             if (auto ctx = video_analyzer_->getStreamContext(stream, profile)) {
-                data["url"] = ctx->source_url;
-                data["model_id"] = ctx->model_id;
-                data["task"] = (ctx->task == AnalysisType::INSTANCE_SEGMENTATION) ? "seg" : (ctx->task == AnalysisType::POSE_ESTIMATION ? "pose" : "det");
-                data["ref_count"] = ctx->ref_count;
+                appendContext(data, *ctx);
             } else {
                 data["url"] = url;
                 data["model_id"] = model_id;
@@ -104,7 +128,7 @@ void AnalysisAPI::setupRoutes() {
         } catch (const std::exception& e) { return HTTPServer::errorResponse(std::string("退订失败: ")+e.what(), 400); }
     });
 
-    http_server_->POST("/api/source/switch", [this](const HTTPServer::Request& req) {
+    http_server_->POST("/api/source/switch", [this, appendContext](const HTTPServer::Request& req) {
         try {
             Json::Value body = HTTPServer::parseJsonBody(req.body);
             std::string stream = body.get("stream", "").asString();
@@ -113,17 +137,21 @@ void AnalysisAPI::setupRoutes() {
             if (stream.empty() || url.empty()) return HTTPServer::errorResponse("缺少 stream/url", 400);
             bool ok = video_analyzer_ && video_analyzer_->switchSourceFor(stream, profile, url);
             if (!ok) return HTTPServer::errorResponse("切源失败", 500);
-            Json::Value data; data["stream"] = stream; data["profile"] = profile; data["status"] = "switched"; data["url"] = url;
+            Json::Value data; data["stream"] = stream; data["profile"] = profile; data["status"] = "switched";
+            data["url"] = url;
+            data["pipeline_state"] = "idle";
+            data["prewarm_success"] = false;
+            data["last_frame_id"] = 0;
+            data["avg_latency_ms"] = 0.0;
+            data["fps"] = 0.0;
             if (auto ctx = video_analyzer_->getStreamContext(stream, profile)) {
-                data["model_id"] = ctx->model_id;
-                data["task"] = (ctx->task == AnalysisType::INSTANCE_SEGMENTATION) ? "seg" : (ctx->task == AnalysisType::POSE_ESTIMATION ? "pose" : "det");
-                data["ref_count"] = ctx->ref_count;
+                appendContext(data, *ctx);
             }
             return HTTPServer::jsonResponse(createSuccessResponse(data));
         } catch (const std::exception& e) { return HTTPServer::errorResponse(std::string("切源失败: ")+e.what(), 400); }
     });
 
-    http_server_->POST("/api/model/switch", [this](const HTTPServer::Request& req) {
+    http_server_->POST("/api/model/switch", [this, appendContext](const HTTPServer::Request& req) {
         try {
             Json::Value body = HTTPServer::parseJsonBody(req.body);
             std::string stream = body.get("stream", "").asString();
@@ -132,17 +160,21 @@ void AnalysisAPI::setupRoutes() {
             if (model_id.empty()) return HTTPServer::errorResponse("缺少 model_id", 400);
             bool ok = video_analyzer_ && video_analyzer_->switchModelFor(stream, profile, model_id);
             if (!ok) return HTTPServer::errorResponse("切换模型失败", 500);
-            Json::Value data; data["stream"] = stream; data["profile"] = profile; data["status"] = "switched"; data["model_id"] = model_id;
+            Json::Value data; data["stream"] = stream; data["profile"] = profile; data["status"] = "switched";
+            data["model_id"] = model_id;
+            data["pipeline_state"] = "idle";
+            data["prewarm_success"] = false;
+            data["last_frame_id"] = 0;
+            data["avg_latency_ms"] = 0.0;
+            data["fps"] = 0.0;
             if (auto ctx = video_analyzer_->getStreamContext(stream, profile)) {
-                data["url"] = ctx->source_url;
-                data["task"] = (ctx->task == AnalysisType::INSTANCE_SEGMENTATION) ? "seg" : (ctx->task == AnalysisType::POSE_ESTIMATION ? "pose" : "det");
-                data["ref_count"] = ctx->ref_count;
+                appendContext(data, *ctx);
             }
             return HTTPServer::jsonResponse(createSuccessResponse(data));
         } catch (const std::exception& e) { return HTTPServer::errorResponse(std::string("切换模型失败: ")+e.what(), 400); }
     });
 
-    http_server_->POST("/api/task/switch", [this](const HTTPServer::Request& req) {
+    http_server_->POST("/api/task/switch", [this, appendContext](const HTTPServer::Request& req) {
         try {
             Json::Value body = HTTPServer::parseJsonBody(req.body);
             std::string stream = body.get("stream", "").asString();
@@ -155,10 +187,13 @@ void AnalysisAPI::setupRoutes() {
             if (!ok) return HTTPServer::errorResponse("切换任务失败", 500);
             Json::Value data; data["stream"] = stream; data["profile"] = profile; data["status"] = "switched";
             data["task"] = task;
+            data["pipeline_state"] = "idle";
+            data["prewarm_success"] = false;
+            data["last_frame_id"] = 0;
+            data["avg_latency_ms"] = 0.0;
+            data["fps"] = 0.0;
             if (auto ctx = video_analyzer_->getStreamContext(stream, profile)) {
-                data["model_id"] = ctx->model_id;
-                data["url"] = ctx->source_url;
-                data["ref_count"] = ctx->ref_count;
+                appendContext(data, *ctx);
             }
             return HTTPServer::jsonResponse(createSuccessResponse(data));
         } catch (const std::exception& e) { return HTTPServer::errorResponse(std::string("切换任务失败: ")+e.what(), 400); }
@@ -186,6 +221,21 @@ void AnalysisAPI::setupRoutes() {
             Json::Value data; data["engine"] = engine; data["device"] = device; data["status"] = "accepted";
             return HTTPServer::jsonResponse(createSuccessResponse(data));
         } catch (const std::exception& e) { return HTTPServer::errorResponse(std::string("设置引擎失败: ")+e.what(), 400); }
+    });
+
+    http_server_->GET("/api/pipelines", [this, appendContext](const HTTPServer::Request&) {
+        Json::Value arr(Json::arrayValue);
+        if (video_analyzer_) {
+            auto contexts = video_analyzer_->listStreamContexts();
+            for (const auto& ctx : contexts) {
+                Json::Value item;
+                appendContext(item, ctx);
+                item["stream"] = ctx.stream;
+                item["profile"] = ctx.profile;
+                arr.append(item);
+            }
+        }
+        return HTTPServer::jsonResponse(createSuccessResponse(arr));
     });
 }
 

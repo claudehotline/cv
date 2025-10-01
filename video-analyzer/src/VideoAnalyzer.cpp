@@ -292,6 +292,27 @@ bool VideoAnalyzer::subscribeStream(const std::string& stream, const std::string
         switchModelFor(stream, profile, effective_model);
     }
 
+    if (auto ctx = track_manager_.getContext(stream, profile)) {
+        if (ctx->pipeline) {
+            std::weak_ptr<Pipeline> weak_pipeline = ctx->pipeline;
+            track_manager_.setPrewarmCallback(stream, profile, [this, weak_pipeline]() {
+                auto pipeline = weak_pipeline.lock();
+                if (!pipeline) {
+                    return false;
+                }
+                Pipeline::Options opts = pipeline->snapshot();
+                if (opts.model_id.empty()) {
+                    return true;
+                }
+                AnalysisType task = opts.task;
+                if (task == AnalysisType::INSTANCE_SEGMENTATION) {
+                    return setCurrentModel(opts.model_id, AnalysisType::INSTANCE_SEGMENTATION);
+                }
+                return setCurrentModel(opts.model_id, AnalysisType::OBJECT_DETECTION);
+            });
+        }
+    }
+
     bool firstSubscriber = !before.has_value();
     if (firstSubscriber) {
         std::string effective_url = !url.empty() ? url : (before ? before->source_url : std::string());
@@ -378,9 +399,42 @@ std::optional<StreamContextInfo> VideoAnalyzer::getStreamContext(const std::stri
         info.model_id = ctx->model_id;
         info.task = ctx->task;
         info.ref_count = ctx->ref_count;
+        if (ctx->pipeline) {
+            info.pipeline_state = ctx->pipeline->state();
+            info.prewarm_success = ctx->pipeline->wasPrewarmSuccessful();
+            Pipeline::Metrics m = ctx->pipeline->metrics();
+            info.last_frame_id = m.last_frame_id;
+            info.avg_latency_ms = m.average_latency_ms;
+            info.fps = m.fps;
+        }
         return info;
     }
     return std::nullopt;
+}
+
+std::vector<StreamContextInfo> VideoAnalyzer::listStreamContexts() const {
+    std::vector<StreamContextInfo> list;
+    auto contexts = track_manager_.listContexts();
+    list.reserve(contexts.size());
+    for (const auto& ctx : contexts) {
+        StreamContextInfo info;
+        info.stream = ctx.stream;
+        info.profile = ctx.profile;
+        info.source_url = ctx.source_url;
+        info.model_id = ctx.model_id;
+        info.task = ctx.task;
+        info.ref_count = ctx.ref_count;
+        if (ctx.pipeline) {
+            info.pipeline_state = ctx.pipeline->state();
+            info.prewarm_success = ctx.pipeline->wasPrewarmSuccessful();
+            Pipeline::Metrics m = ctx.pipeline->metrics();
+            info.last_frame_id = m.last_frame_id;
+            info.avg_latency_ms = m.average_latency_ms;
+            info.fps = m.fps;
+        }
+        list.emplace_back(std::move(info));
+    }
+    return list;
 }
 
 void VideoAnalyzer::workerLoop() {
@@ -497,10 +551,8 @@ bool VideoAnalyzer::loadConfig(const std::string& config_file) {
         if (!loaded_from_yaml && root.isMember("models") && root["models"].isObject()) {
             const auto& models = root["models"];
 
-            // 支持新格式：detection 和 segmentation 为数组
             if (models.isMember("detection")) {
                 if (models["detection"].isArray()) {
-                    // 新格式：数组，包含多个模型
                     const auto& det_array = models["detection"];
                     for (const auto& model : det_array) {
                         std::string model_id = model.get("model", "").asString();
@@ -529,7 +581,6 @@ bool VideoAnalyzer::loadConfig(const std::string& config_file) {
                         default_detection_id = parsed_detection_models.front().id;
                     }
                 } else if (models["detection"].isObject()) {
-                    // 旧格式：单个对象
                     const auto& det = models["detection"];
                     std::string p = det.get("path", "").asString();
                     if (!p.empty()) {
@@ -556,7 +607,6 @@ bool VideoAnalyzer::loadConfig(const std::string& config_file) {
 
             if (models.isMember("segmentation")) {
                 if (models["segmentation"].isArray()) {
-                    // 新格式：数组，包含多个模型
                     const auto& seg_array = models["segmentation"];
                     for (const auto& model : seg_array) {
                         std::string model_id = model.get("model", "").asString();
@@ -565,19 +615,16 @@ bool VideoAnalyzer::loadConfig(const std::string& config_file) {
                             model_path_mapping_[model_id] = path;
                         }
                     }
-                    // 设置第一个为默认模型
                     if (seg_array.size() > 0 && seg_array[0].isMember("path")) {
                         model_path_mapping_["default_segmentation"] = seg_array[0].get("path", "").asString();
                     }
                 } else if (models["segmentation"].isObject()) {
-                    // 旧格式：单个对象
                     const auto& seg = models["segmentation"];
                     std::string p = seg.get("path", "").asString();
                     if (!p.empty()) model_path_mapping_["default_segmentation"] = p;
                 }
             }
-        }
-        {
+        }        {
             std::unique_lock<std::shared_mutex> lock(model_mutex_);
             detection_models_ = std::move(parsed_detection_models);
             if (!default_detection_id.empty()) {
@@ -661,3 +708,4 @@ std::vector<std::string> VideoAnalyzer::getRTSPSourceIds() const {
     }
     return source_ids;
 }
+

@@ -19,6 +19,7 @@
 #include "analysis/Interfaces.h"
 #include "analysis/OnnxRuntimeBackend.h"
 #include "orchestration/TrackManager.h"
+#include "pipeline/Pipeline.h"
 #include "ConfigLoader.h"
 
 struct AnalysisRequest {
@@ -57,6 +58,11 @@ struct StreamContextInfo {
     std::string model_id;
     AnalysisType task { AnalysisType::OBJECT_DETECTION };
     int ref_count {0};
+    Pipeline::State pipeline_state { Pipeline::State::Idle };
+    bool prewarm_success {false};
+    int last_frame_id {0};
+    double avg_latency_ms {0.0};
+    double fps {0.0};
 };
 
 // Compatibility base that conforms to the new interfaces
@@ -132,6 +138,7 @@ public:
     void setInferenceDevice(InferenceDevice dev, int cuda_device_id = 0);
 
     std::optional<StreamContextInfo> getStreamContext(const std::string& stream, const std::string& profile) const;
+    std::vector<StreamContextInfo> listStreamContexts() const;
 
     // Get list of RTSP sources
     std::vector<std::string> getRTSPSourceIds() const;

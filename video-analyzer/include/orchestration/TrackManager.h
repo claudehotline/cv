@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -25,7 +26,7 @@ public:
         std::string source_url;
         std::string model_id;
         AnalysisType task { AnalysisType::OBJECT_DETECTION };
-        std::shared_ptr<Pipeline> pipeline; // placeholder for future real pipeline
+        std::shared_ptr<Pipeline> pipeline;
     };
 
     TrackManager();
@@ -39,6 +40,9 @@ public:
     bool switchTask(const std::string& stream, const std::string& profile, AnalysisType task);
 
     std::optional<Context> getContext(const std::string& stream, const std::string& profile) const;
+    std::vector<Context> listContexts() const;
+    bool setPrewarmCallback(const std::string& stream, const std::string& profile,
+                            std::function<bool()> callback);
 
 private:
     struct KeyHash {
