@@ -1,0 +1,22 @@
+{
+  "detection": [
+    {
+      "id": "yolov12x",
+      "family": "yolo",
+      "type": "onnx",
+      "path": "model/yolov12x.onnx",
+      "input_size": [640, 640],
+      "defaults": { "conf": 0.65, "iou": 0.45 }
+    },
+    {
+      "id": "yolov12l",
+      "family": "yolo",
+      "type": "onnx",
+      "path": "model/yolov12x.onnx",
+      "input_size": [640, 640],
+      "defaults": { "conf": 0.65, "iou": 0.45 }
+    }
+  ],
+  "segmentation": []
+}
+

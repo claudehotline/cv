@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "det_720p": {
+      "task": "det",
+      "model": { "family": "yolo", "onnx": "model/yolov12x.onnx", "input_w": 640, "input_h": 640 },
+      "encoder": { "w": 1280, "h": 720, "fps": 30, "bitrate_kbps": 3500, "gop": 60, "bframes": 0 }
+    }
+  }
+}
+

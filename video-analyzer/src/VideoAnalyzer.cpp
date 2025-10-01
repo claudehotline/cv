@@ -1,6 +1,7 @@
 #include "VideoAnalyzer.h"
 #include "WebRTCStreamer.h"
 #include "analysis/ModelRegistry.h"
+#include "ConfigLoader.h"
 
 #include <json/json.h>
 #include <opencv2/opencv.hpp>
@@ -261,6 +262,127 @@ bool VideoAnalyzer::setCurrentModel(const std::string& model_id, AnalysisType ty
     return false;
 }
 
+// TrackManager wrappers (skeleton wiring)
+bool VideoAnalyzer::subscribeStream(const std::string& stream, const std::string& profile,
+                         const std::string& url,
+                         const std::string& model_id,
+                         AnalysisType task) {
+    auto before = track_manager_.getContext(stream, profile);
+
+    std::optional<ProfileEntry> profile_cfg = findProfile(profile);
+
+    AnalysisType effective_task = task;
+    if (profile_cfg && !profile_cfg->task.empty()) {
+        effective_task = parseTask(profile_cfg->task);
+    }
+
+    std::string effective_model = model_id;
+    if (effective_model.empty() && profile_cfg && !profile_cfg->model_id.empty()) {
+        effective_model = profile_cfg->model_id;
+    }
+
+    if (!track_manager_.subscribe(stream, profile)) return false;
+
+    track_manager_.switchTask(stream, profile, effective_task);
+
+    if (!url.empty()) {
+        track_manager_.switchSource(stream, profile, url);
+    }
+    if (!effective_model.empty()) {
+        switchModelFor(stream, profile, effective_model);
+    }
+
+    bool firstSubscriber = !before.has_value();
+    if (firstSubscriber) {
+        std::string effective_url = !url.empty() ? url : (before ? before->source_url : std::string());
+        if (!effective_url.empty()) {
+            addRTSPSource(stream, effective_url, effective_task);
+        }
+        if (!isRTSPProcessing()) {
+            startRTSPProcessing();
+        }
+    }
+    return true;
+}
+
+void VideoAnalyzer::unsubscribeStream(const std::string& stream, const std::string& profile) {
+    auto before = track_manager_.getContext(stream, profile);
+    track_manager_.unsubscribe(stream, profile);
+    if (before && before->ref_count == 1) {
+        removeRTSPSource(stream);
+    }
+}
+
+bool VideoAnalyzer::switchSourceFor(const std::string& stream, const std::string& profile, const std::string& new_url) {
+    bool ok = track_manager_.switchSource(stream, profile, new_url);
+    if (!ok) return false;
+    removeRTSPSource(stream);
+    AnalysisType task = AnalysisType::OBJECT_DETECTION;
+    if (auto ctx = track_manager_.getContext(stream, profile)) {
+        task = ctx->task;
+    }
+    addRTSPSource(stream, new_url, task);
+    if (!isRTSPProcessing()) startRTSPProcessing();
+    return true;
+}
+
+bool VideoAnalyzer::switchModelFor(const std::string& stream, const std::string& profile, const std::string& model_id) {
+    if (model_id.empty()) return track_manager_.switchModel(stream, profile, model_id);
+
+    AnalysisType task = AnalysisType::OBJECT_DETECTION;
+    if (auto ctx = track_manager_.getContext(stream, profile)) {
+        task = ctx->task;
+    }
+
+    bool ok = track_manager_.switchModel(stream, profile, model_id);
+    if (!ok) return false;
+
+    if (task == AnalysisType::INSTANCE_SEGMENTATION) {
+        return setCurrentModel(model_id, AnalysisType::INSTANCE_SEGMENTATION);
+    }
+    return setCurrentModel(model_id, AnalysisType::OBJECT_DETECTION);
+}
+
+bool VideoAnalyzer::switchTaskFor(const std::string& stream, const std::string& profile, AnalysisType task) {
+    return track_manager_.switchTask(stream, profile, task);
+}
+
+void VideoAnalyzer::setInferenceDevice(InferenceDevice dev, int cuda_device_id) {
+    inference_config_.device = dev;
+    inference_config_.cuda_device_id = cuda_device_id;
+    std::cout << "Engine device set: " << OnnxRuntimeBackend::deviceToString(dev)
+              << ", device_id=" << cuda_device_id << std::endl;
+}
+
+std::optional<ProfileEntry> VideoAnalyzer::findProfile(const std::string& profile) const {
+    auto it = std::find_if(profile_configs_.begin(), profile_configs_.end(),
+        [&profile](const ProfileEntry& entry){ return entry.name == profile; });
+    if (it == profile_configs_.end()) return std::nullopt;
+    return *it;
+}
+
+AnalysisType VideoAnalyzer::parseTask(const std::string& task) const {
+    std::string lower = task;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+    if (lower == "seg" || lower == "instance_segmentation") return AnalysisType::INSTANCE_SEGMENTATION;
+    if (lower == "pose" || lower == "pose_estimation") return AnalysisType::POSE_ESTIMATION;
+    return AnalysisType::OBJECT_DETECTION;
+}
+
+std::optional<StreamContextInfo> VideoAnalyzer::getStreamContext(const std::string& stream, const std::string& profile) const {
+    if (auto ctx = track_manager_.getContext(stream, profile)) {
+        StreamContextInfo info;
+        info.stream = ctx->stream;
+        info.profile = ctx->profile;
+        info.source_url = ctx->source_url;
+        info.model_id = ctx->model_id;
+        info.task = ctx->task;
+        info.ref_count = ctx->ref_count;
+        return info;
+    }
+    return std::nullopt;
+}
+
 void VideoAnalyzer::workerLoop() {
     while (running_) {
         AnalysisRequest req; {
@@ -317,8 +439,14 @@ void VideoAnalyzer::rtspProcessingLoop(RTSPSource* s) {
 
 bool VideoAnalyzer::loadConfig(const std::string& config_file) {
     try {
-        std::ifstream f(config_file); if (!f.is_open()) { std::cerr << "Cannot open config: " << config_file << std::endl; return false; }
-        Json::Value root; Json::CharReaderBuilder b; std::string errs; if (!Json::parseFromStream(b, f, &root, &errs)) { std::cerr << "JSON parse error: " << errs << std::endl; return false; }
+        std::ifstream f(config_file);
+        Json::Value root;
+        if (f.is_open()) {
+            Json::CharReaderBuilder b; std::string errs; 
+            if (!Json::parseFromStream(b, f, &root, &errs)) { std::cerr << "JSON parse error: " << errs << std::endl; }
+        } else {
+            std::cerr << "Cannot open config: " << config_file << ", will try YAML(JSON-style) files if present." << std::endl;
+        }
 
         // Reset model caches
         {
@@ -331,10 +459,42 @@ bool VideoAnalyzer::loadConfig(const std::string& config_file) {
         std::vector<ModelConfig> parsed_detection_models;
         std::string default_detection_id;
 
+        std::string config_dir = config_file;
+        size_t dir_pos = config_dir.find_last_of("/\\");
+        if (dir_pos != std::string::npos) config_dir = config_dir.substr(0, dir_pos);
+        else config_dir = ".";
+
+        bool loaded_from_yaml = false;
+        auto detection_entries = ConfigLoader::loadDetectionModels(config_dir);
+        if (!detection_entries.empty()) {
+            loaded_from_yaml = true;
+            for (const auto& entry : detection_entries) {
+                ModelConfig cfg;
+                cfg.id = entry.id;
+                cfg.name = entry.id;
+                cfg.type = entry.type;
+                cfg.path = entry.path;
+                cfg.confidence_threshold = entry.conf;
+                cfg.nms_threshold = entry.iou;
+                cfg.input_width = entry.input_width;
+                cfg.input_height = entry.input_height;
+                if (!cfg.id.empty() && !cfg.path.empty()) {
+                    model_path_mapping_[cfg.id] = cfg.path;
+                    parsed_detection_models.emplace_back(std::move(cfg));
+                }
+            }
+            if (!parsed_detection_models.empty()) {
+                model_path_mapping_["default_detection"] = parsed_detection_models.front().path;
+                default_detection_id = parsed_detection_models.front().id;
+            }
+        }
+
+        profile_configs_ = ConfigLoader::loadProfiles(config_dir);
+
         num_workers_ = root.get("num_workers", 2).asInt();
         webrtc_enabled_ = root.get("webrtc_enabled", false).asBool(); if (webrtc_enabled_) { int port = root.get("webrtc_port", 8080).asInt(); startWebRTCStreaming(port); }
 
-        if (root.isMember("models") && root["models"].isObject()) {
+        if (!loaded_from_yaml && root.isMember("models") && root["models"].isObject()) {
             const auto& models = root["models"];
 
             // 支持新格式：detection 和 segmentation 为数组
@@ -417,7 +577,6 @@ bool VideoAnalyzer::loadConfig(const std::string& config_file) {
                 }
             }
         }
-
         {
             std::unique_lock<std::shared_mutex> lock(model_mutex_);
             detection_models_ = std::move(parsed_detection_models);
@@ -434,7 +593,7 @@ bool VideoAnalyzer::loadConfig(const std::string& config_file) {
             if (webrtc_streamer_) webrtc_streamer_->SetFrameRate(target_fps);
         }
 
-        // inference settings
+        // inference settings (legacy JSON)
         if (root.isMember("inference") && root["inference"].isObject()) {
             const auto& inf = root["inference"];
 
@@ -472,6 +631,20 @@ bool VideoAnalyzer::loadConfig(const std::string& config_file) {
 
             std::cout << "📝 Inference configuration loaded:" << std::endl;
             std::cout << "   Device: " << OnnxRuntimeBackend::deviceToString(inference_config_.device) << std::endl;
+        }
+
+        AppConfigPayload app_payload = ConfigLoader::loadAppConfig(config_dir);
+        if (!app_payload.engine.type.empty()) {
+            std::string tl = app_payload.engine.type;
+            std::transform(tl.begin(), tl.end(), tl.begin(), [](unsigned char c){ return (char)std::tolower(c); });
+            if (tl.find("cuda") != std::string::npos) {
+                inference_config_.device = InferenceDevice::CUDA;
+                inference_config_.cuda_device_id = app_payload.engine.device;
+            } else {
+                inference_config_.device = InferenceDevice::CPU;
+                inference_config_.cuda_device_id = 0;
+            }
+            std::cout << "📝 Engine override from app.yaml: " << OnnxRuntimeBackend::deviceToString(inference_config_.device) << std::endl;
         }
 
         return true;

@@ -7,6 +7,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <shared_mutex>
 #include <string>
@@ -17,6 +18,8 @@
 #include "analysis/Types.h"
 #include "analysis/Interfaces.h"
 #include "analysis/OnnxRuntimeBackend.h"
+#include "orchestration/TrackManager.h"
+#include "ConfigLoader.h"
 
 struct AnalysisRequest {
     cv::Mat frame;
@@ -45,6 +48,15 @@ struct ModelConfig {
     float nms_threshold {0.0f};
     int input_width {0};
     int input_height {0};
+};
+
+struct StreamContextInfo {
+    std::string stream;
+    std::string profile;
+    std::string source_url;
+    std::string model_id;
+    AnalysisType task { AnalysisType::OBJECT_DETECTION };
+    int ref_count {0};
 };
 
 // Compatibility base that conforms to the new interfaces
@@ -106,6 +118,21 @@ public:
     // Hot switch models
     bool setCurrentModel(const std::string& model_id, AnalysisType type);
 
+    // Subscription and switching (per stream/profile) - skeleton for TrackManager
+    bool subscribeStream(const std::string& stream, const std::string& profile,
+                         const std::string& url = std::string(),
+                         const std::string& model_id = std::string(),
+                         AnalysisType task = AnalysisType::OBJECT_DETECTION);
+    void unsubscribeStream(const std::string& stream, const std::string& profile);
+    bool switchSourceFor(const std::string& stream, const std::string& profile, const std::string& new_url);
+    bool switchModelFor(const std::string& stream, const std::string& profile, const std::string& model_id);
+    bool switchTaskFor(const std::string& stream, const std::string& profile, AnalysisType task);
+
+    // Inference device control (engine set)
+    void setInferenceDevice(InferenceDevice dev, int cuda_device_id = 0);
+
+    std::optional<StreamContextInfo> getStreamContext(const std::string& stream, const std::string& profile) const;
+
     // Get list of RTSP sources
     std::vector<std::string> getRTSPSourceIds() const;
 
@@ -120,6 +147,8 @@ private:
     std::vector<ModelConfig> detection_models_;
     std::string current_detection_model_id_;
     mutable std::shared_mutex model_mutex_;
+
+    std::vector<ProfileEntry> profile_configs_;
 
     std::function<void(const AnalysisResult&)> result_callback_;
 
@@ -156,6 +185,12 @@ private:
 
     // Inference configuration
     InferenceConfig inference_config_;
+
+    // Track manager for per-(stream,profile) pipelines
+    TrackManager track_manager_;
+
+    std::optional<ProfileEntry> findProfile(const std::string& profile) const;
+    AnalysisType parseTask(const std::string& task) const;
 
     void workerLoop();
     void processRequest(const AnalysisRequest& request);
