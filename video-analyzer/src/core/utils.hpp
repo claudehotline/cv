@@ -26,6 +26,8 @@ struct LetterboxMeta {
     int pad_y {0};
     int input_width {0};
     int input_height {0};
+    int original_width {0};
+    int original_height {0};
 };
 
 struct TensorView {

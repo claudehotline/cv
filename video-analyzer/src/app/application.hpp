@@ -34,6 +34,8 @@ public:
     const std::map<std::string, AnalyzerParamsEntry>& analyzerParams() const { return analyzer_params_; }
     const AppConfigPayload& appConfig() const { return app_config_; }
     std::vector<va::core::TrackManager::PipelineInfo> pipelines() const;
+    bool loadModel(const std::string& model_id);
+    bool isModelActive(const std::string& model_id) const;
     struct SystemStats {
         size_t total_pipelines {0};
         size_t running_pipelines {0};
@@ -48,7 +50,8 @@ public:
 
     std::optional<std::string> subscribeStream(const std::string& stream_id,
                                                const std::string& profile_name,
-                                               const std::string& source_uri);
+                                               const std::string& source_uri,
+                                               const std::optional<std::string>& model_override = std::nullopt);
     bool unsubscribeStream(const std::string& stream_id, const std::string& profile_name);
 
 private:
@@ -67,8 +70,10 @@ private:
 
     std::unordered_map<std::string, DetectionModelEntry> detection_model_index_;
     std::unordered_map<std::string, ProfileEntry> profile_index_;
+    std::unordered_map<std::string, std::string> active_models_by_task_;
 
     std::optional<DetectionModelEntry> resolveModel(const ProfileEntry& profile) const;
+    std::optional<DetectionModelEntry> findModelById(const std::string& model_id) const;
     std::optional<AnalyzerParamsEntry> resolveParams(const std::string& task) const;
     va::core::SourceConfig buildSourceConfig(const std::string& stream_id,
                                             const std::string& uri) const;

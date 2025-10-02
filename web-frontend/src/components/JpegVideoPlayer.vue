@@ -18,7 +18,7 @@
             size="small"
             effect="dark"
           >
-            {{ isPlaying ? `播放中 ${fps.toFixed(1)}fps` : '等待数据' }}
+            {{ isPlaying ? `播放中 ${fps.toFixed(1)}fps` : "等待数据" }}
           </el-tag>
         </div>
 
@@ -34,14 +34,18 @@
             :style="getDetectionBoxStyle(detection)"
           >
             <span class="detection-label">
-              {{ detection.class_name }} ({{ Math.round(detection.confidence * 100) }}%)
+              {{ detection.class_name }} ({{
+                Math.round(detection.confidence * 100)
+              }}%)
             </span>
           </div>
         </div>
 
         <!-- 视频信息显示 -->
-        <div class="video-info" v-if="showVideoInfo">
-          <div class="info-item">分辨率: {{ currentWidth }}x{{ currentHeight }}</div>
+        <div v-if="showVideoInfo" class="video-info">
+          <div class="info-item">
+            分辨率: {{ currentWidth }}x{{ currentHeight }}
+          </div>
           <div class="info-item">帧率: {{ fps.toFixed(1) }} fps</div>
           <div class="info-item">已接收: {{ frameCount }} 帧</div>
           <div class="info-item">延迟: {{ latency }}ms</div>
@@ -57,37 +61,33 @@
     </div>
 
     <!-- 控制按钮 -->
-    <div class="controls" v-if="showControls">
+    <div v-if="showControls" class="controls">
       <el-button-group>
         <el-button
           size="small"
-          @click="togglePlay"
           :disabled="!hasReceivedFrame"
+          @click="togglePlay"
         >
-          <el-icon><VideoPlay v-if="!isPlaying" /><VideoPause v-else /></el-icon>
+          <el-icon
+            ><VideoPlay v-if="!isPlaying" /><VideoPause v-else
+          /></el-icon>
         </el-button>
 
         <el-button
           size="small"
-          @click="saveCurrentFrame"
           :disabled="!hasReceivedFrame"
+          @click="saveCurrentFrame"
         >
           <el-icon><Download /></el-icon>
           保存
         </el-button>
 
-        <el-button
-          size="small"
-          @click="toggleDetections"
-        >
+        <el-button size="small" @click="toggleDetections">
           <el-icon><View /></el-icon>
-          {{ showDetections ? '隐藏' : '显示' }}检测
+          {{ showDetections ? "隐藏" : "显示" }}检测
         </el-button>
 
-        <el-button
-          size="small"
-          @click="toggleVideoInfo"
-        >
+        <el-button size="small" @click="toggleVideoInfo">
           <el-icon><InfoFilled /></el-icon>
           信息
         </el-button>
@@ -97,17 +97,24 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { Camera, VideoPlay, VideoPause, Download, View, InfoFilled } from '@element-plus/icons-vue'
-import type { DetectionResult } from '@/types'
+import { ref, computed, onMounted, onUnmounted, nextTick } from "vue";
+import {
+  Camera,
+  VideoPlay,
+  VideoPause,
+  Download,
+  View,
+  InfoFilled,
+} from "@element-plus/icons-vue";
+import type { DetectionResult } from "@/types";
 
 // Props
 interface Props {
-  width?: number
-  height?: number
-  showControls?: boolean
-  showDetections?: boolean
-  detections?: DetectionResult[]
+  width?: number;
+  height?: number;
+  showControls?: boolean;
+  showDetections?: boolean;
+  detections?: DetectionResult[];
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -115,205 +122,208 @@ const props = withDefaults(defineProps<Props>(), {
   height: 480,
   showControls: true,
   showDetections: true,
-  detections: () => []
-})
+  detections: () => [],
+});
 
 // Emits
 const emit = defineEmits<{
-  frameReceived: [width: number, height: number]
-  error: [message: string]
-}>()
+  frameReceived: [width: number, height: number];
+  error: [message: string];
+}>();
 
 // 响应式数据
-const canvasRef = ref<HTMLCanvasElement | null>(null)
-const isPlaying = ref(false)
-const hasReceivedFrame = ref(false)
-const showVideoInfo = ref(false)
+const canvasRef = ref<HTMLCanvasElement | null>(null);
+const isPlaying = ref(false);
+const hasReceivedFrame = ref(false);
+const showVideoInfo = ref(false);
 
 // 视频统计信息
-const frameCount = ref(0)
-const fps = ref(0)
-const latency = ref(0)
-const currentWidth = ref(0)
-const currentHeight = ref(0)
-const currentDetections = ref<DetectionResult[]>([])
+const frameCount = ref(0);
+const fps = ref(0);
+const latency = ref(0);
+const currentWidth = ref(0);
+const currentHeight = ref(0);
+const currentDetections = ref<DetectionResult[]>([]);
 
 // FPS计算
 const fpsCalculator = {
   frameTimestamps: [] as number[],
-  lastUpdateTime: 0
-}
+  lastUpdateTime: 0,
+};
 
 // 计算属性
-const canvasWidth = computed(() => props.width)
-const canvasHeight = computed(() => props.height)
+const canvasWidth = computed(() => props.width);
+const canvasHeight = computed(() => props.height);
 
 const containerStyle = computed(() => ({
   width: `${props.width}px`,
-  height: `${props.height}px`
-}))
+  height: `${props.height}px`,
+}));
 
 // 方法
 const updateDetections = (detections: DetectionResult[]) => {
   if (props.showDetections) {
-    currentDetections.value = detections || []
+    currentDetections.value = detections || [];
   }
-}
+};
 
 const getDetectionBoxStyle = (detection: DetectionResult) => {
   // 将检测框坐标转换为Canvas上的相对位置
-  const scaleX = props.width / currentWidth.value
-  const scaleY = props.height / currentHeight.value
+  const scaleX = props.width / currentWidth.value;
+  const scaleY = props.height / currentHeight.value;
 
   return {
     left: `${detection.bbox.x * scaleX}px`,
     top: `${detection.bbox.y * scaleY}px`,
     width: `${detection.bbox.width * scaleX}px`,
     height: `${detection.bbox.height * scaleY}px`,
-  }
-}
+  };
+};
 
 const calculateFPS = () => {
-  const now = performance.now()
-  fpsCalculator.frameTimestamps.push(now)
+  const now = performance.now();
+  fpsCalculator.frameTimestamps.push(now);
 
   // 保留最近1秒的时间戳
   fpsCalculator.frameTimestamps = fpsCalculator.frameTimestamps.filter(
-    timestamp => now - timestamp <= 1000
-  )
+    (timestamp) => now - timestamp <= 1000,
+  );
 
   // 每500ms更新一次FPS显示
   if (now - fpsCalculator.lastUpdateTime >= 500) {
-    fps.value = fpsCalculator.frameTimestamps.length
-    fpsCalculator.lastUpdateTime = now
+    fps.value = fpsCalculator.frameTimestamps.length;
+    fpsCalculator.lastUpdateTime = now;
   }
-}
+};
 
 // 显示JPEG帧
 const displayJpegFrame = (jpegData: ArrayBuffer) => {
-  if (!canvasRef.value) return
+  if (!canvasRef.value) return;
 
   try {
-    const blob = new Blob([jpegData], { type: 'image/jpeg' })
-    const imageUrl = URL.createObjectURL(blob)
+    const blob = new Blob([jpegData], { type: "image/jpeg" });
+    const imageUrl = URL.createObjectURL(blob);
 
-    const img = new Image()
+    const img = new Image();
     img.onload = () => {
-      const canvas = canvasRef.value!
-      const ctx = canvas.getContext('2d')!
+      const canvas = canvasRef.value!;
+      const ctx = canvas.getContext("2d")!;
 
       // 更新当前帧尺寸
-      currentWidth.value = img.width
-      currentHeight.value = img.height
+      currentWidth.value = img.width;
+      currentHeight.value = img.height;
 
       // 清除画布
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       // 保持宽高比绘制图像
-      const scale = Math.min(canvas.width / img.width, canvas.height / img.height)
-      const scaledWidth = img.width * scale
-      const scaledHeight = img.height * scale
-      const x = (canvas.width - scaledWidth) / 2
-      const y = (canvas.height - scaledHeight) / 2
+      const scale = Math.min(
+        canvas.width / img.width,
+        canvas.height / img.height,
+      );
+      const scaledWidth = img.width * scale;
+      const scaledHeight = img.height * scale;
+      const x = (canvas.width - scaledWidth) / 2;
+      const y = (canvas.height - scaledHeight) / 2;
 
-      ctx.drawImage(img, x, y, scaledWidth, scaledHeight)
+      ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
 
       // 更新统计信息
-      frameCount.value++
-      calculateFPS()
-      hasReceivedFrame.value = true
-      isPlaying.value = true
+      frameCount.value++;
+      calculateFPS();
+      hasReceivedFrame.value = true;
+      isPlaying.value = true;
 
       // 触发事件
-      emit('frameReceived', img.width, img.height)
+      emit("frameReceived", img.width, img.height);
 
       // 清理URL对象
-      URL.revokeObjectURL(imageUrl)
-    }
+      URL.revokeObjectURL(imageUrl);
+    };
 
     img.onerror = (error) => {
-      console.error('❌ JPEG图像加载失败:', error)
-      emit('error', 'JPEG图像加载失败')
-      URL.revokeObjectURL(imageUrl)
-    }
+      console.error("❌ JPEG图像加载失败:", error);
+      emit("error", "JPEG图像加载失败");
+      URL.revokeObjectURL(imageUrl);
+    };
 
-    img.src = imageUrl
-
+    img.src = imageUrl;
   } catch (error) {
-    console.error('❌ JPEG帧显示失败:', error)
-    emit('error', 'JPEG帧显示失败: ' + (error as Error).message)
+    console.error("❌ JPEG帧显示失败:", error);
+    emit("error", "JPEG帧显示失败: " + (error as Error).message);
   }
-}
+};
 
 // 控制方法
 const togglePlay = () => {
-  isPlaying.value = !isPlaying.value
-}
+  isPlaying.value = !isPlaying.value;
+};
 
 const saveCurrentFrame = () => {
-  if (!canvasRef.value) return
+  if (!canvasRef.value) return;
 
   try {
     canvasRef.value.toBlob((blob) => {
       if (blob) {
-        const url = URL.createObjectURL(blob)
-        const link = document.createElement('a')
-        link.href = url
-        link.download = `frame_${Date.now()}.png`
-        link.click()
-        URL.revokeObjectURL(url)
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `frame_${Date.now()}.png`;
+        link.click();
+        URL.revokeObjectURL(url);
       }
-    }, 'image/png')
+    }, "image/png");
   } catch (error) {
-    console.error('❌ 保存帧失败:', error)
-    emit('error', '保存帧失败')
+    console.error("❌ 保存帧失败:", error);
+    emit("error", "保存帧失败");
   }
-}
+};
 
 const toggleDetections = () => {
   // 触发父组件切换检测显示
-}
+};
 
 const toggleVideoInfo = () => {
-  showVideoInfo.value = !showVideoInfo.value
-}
+  showVideoInfo.value = !showVideoInfo.value;
+};
 
 // 清除画布
 const clearCanvas = () => {
   if (canvasRef.value) {
-    const ctx = canvasRef.value.getContext('2d')
+    const ctx = canvasRef.value.getContext("2d");
     if (ctx) {
-      ctx.clearRect(0, 0, canvasRef.value.width, canvasRef.value.height)
+      ctx.clearRect(0, 0, canvasRef.value.width, canvasRef.value.height);
     }
   }
-  hasReceivedFrame.value = false
-  isPlaying.value = false
-  frameCount.value = 0
-  fps.value = 0
-}
+  hasReceivedFrame.value = false;
+  isPlaying.value = false;
+  frameCount.value = 0;
+  fps.value = 0;
+};
 
 // 更新延迟（由父组件调用）
 const updateLatency = (ms: number) => {
-  latency.value = ms
-}
+  latency.value = ms;
+};
 
 // 暴露方法给父组件
 defineExpose({
   displayJpegFrame,
   updateDetections,
   updateLatency,
-  clearCanvas
-})
+  clearCanvas,
+  saveCurrentFrame,
+});
 
 // 生命周期
 onMounted(() => {
-  console.log('🎬 JPEG视频播放器已挂载')
-})
+  console.log("🎬 JPEG视频播放器已挂载");
+});
 
 onUnmounted(() => {
   // 清理资源
-  clearCanvas()
-})
+  clearCanvas();
+});
 </script>
 
 <style scoped>
@@ -414,12 +424,17 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   color: #666;
-  background: linear-gradient(45deg, #333 25%, transparent 25%),
-              linear-gradient(-45deg, #333 25%, transparent 25%),
-              linear-gradient(45deg, transparent 75%, #333 75%),
-              linear-gradient(-45deg, transparent 75%, #333 75%);
+  background:
+    linear-gradient(45deg, #333 25%, transparent 25%),
+    linear-gradient(-45deg, #333 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #333 75%),
+    linear-gradient(-45deg, transparent 75%, #333 75%);
   background-size: 20px 20px;
-  background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+  background-position:
+    0 0,
+    0 10px,
+    10px -10px,
+    -10px 0px;
 }
 
 .controls {

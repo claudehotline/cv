@@ -2,6 +2,8 @@
 
 #include "analyzer/interfaces.hpp"
 
+#include <vector>
+
 namespace va::analyzer {
 
 class LetterboxPreprocessorCPU : public IPreprocessor {
@@ -13,6 +15,7 @@ public:
 private:
     int input_width_;
     int input_height_;
+    std::vector<float> buffer_;
 };
 
 } // namespace va::analyzer

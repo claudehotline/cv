@@ -8,17 +8,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref } from "vue";
 
-const clicked = ref(false)
+const clicked = ref(false);
 
 const testClick = () => {
-  clicked.value = true
-  console.log('按钮被点击了')
-}
+  clicked.value = true;
+  console.log("按钮被点击了");
+};
 
 // 在组件挂载时输出信息
-console.log('简单测试组件已加载')
+console.log("简单测试组件已加载");
 </script>
 
 <style scoped>

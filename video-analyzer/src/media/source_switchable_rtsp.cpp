@@ -2,6 +2,8 @@
 
 #include <opencv2/imgproc.hpp>
 
+#include <iostream>
+
 namespace va::media {
 
 SwitchableRtspSource::SwitchableRtspSource(std::string uri)
@@ -13,6 +15,7 @@ bool SwitchableRtspSource::start() {
         return true;
     }
     if (!openCapture()) {
+        std::cerr << "[RTSP] failed to open initial capture for URI " << uri_ << std::endl;
         return false;
     }
     running_ = true;
@@ -39,12 +42,14 @@ bool SwitchableRtspSource::read(core::Frame& frame) {
     }
     if (!capture_.isOpened()) {
         if (!openCapture()) {
+            std::cerr << "[RTSP] reopen failed for URI " << uri_ << std::endl;
             return false;
         }
     }
 
     cv::Mat mat;
     if (!capture_.read(mat) || mat.empty()) {
+        std::cerr << "[RTSP] read frame failed for URI " << uri_ << std::endl;
         return false;
     }
 
@@ -91,6 +96,7 @@ bool SwitchableRtspSource::openCapture() {
     capture_.release();
     cv::VideoCapture cap(uri_, cv::CAP_FFMPEG);
     if (!cap.isOpened()) {
+        std::cerr << "[RTSP] cv::VideoCapture open failed for URI " << uri_ << std::endl;
         return false;
     }
     capture_ = std::move(cap);

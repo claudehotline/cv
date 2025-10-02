@@ -7,11 +7,7 @@
           <template #header>
             <div class="card-header">
               <span>分析控制</span>
-              <el-button
-                size="small"
-                type="primary"
-                @click="goToSourceManager"
-              >
+              <el-button size="small" type="primary" @click="goToSourceManager">
                 管理视频源
               </el-button>
             </div>
@@ -31,22 +27,30 @@
                   :value="source.id"
                 />
               </el-select>
-              <div v-if="!videoStore.videoSources.length" class="no-sources-hint">
+              <div
+                v-if="!videoStore.videoSources.length"
+                class="no-sources-hint"
+              >
                 <el-text type="info" size="small">
                   暂无视频源，请先到视频源管理页面添加
                 </el-text>
               </div>
             </el-form-item>
 
-            <el-form-item label="当前源信息" v-if="videoStore.selectedSource">
+            <el-form-item v-if="videoStore.selectedSource" label="当前源信息">
               <el-descriptions :column="1" border size="small">
                 <el-descriptions-item label="名称">
                   {{ videoStore.selectedSource.name }}
                 </el-descriptions-item>
                 <el-descriptions-item label="类型">
                   <el-tag
-                    :type="videoStore.selectedSource.type === 'camera' ? 'success' :
-                           videoStore.selectedSource.type === 'file' ? 'info' : 'warning'"
+                    :type="
+                      videoStore.selectedSource.type === 'camera'
+                        ? 'success'
+                        : videoStore.selectedSource.type === 'file'
+                          ? 'info'
+                          : 'warning'
+                    "
                     size="small"
                   >
                     {{ typeLabels[videoStore.selectedSource.type] }}
@@ -54,8 +58,13 @@
                 </el-descriptions-item>
                 <el-descriptions-item label="状态">
                   <el-tag
-                    :type="videoStore.selectedSource.status === 'active' ? 'success' :
-                           videoStore.selectedSource.status === 'inactive' ? 'info' : 'danger'"
+                    :type="
+                      videoStore.selectedSource.status === 'active'
+                        ? 'success'
+                        : videoStore.selectedSource.status === 'inactive'
+                          ? 'info'
+                          : 'danger'
+                    "
                     size="small"
                   >
                     {{ statusLabels[videoStore.selectedSource.status] }}
@@ -65,7 +74,10 @@
             </el-form-item>
 
             <el-form-item label="分析类型">
-              <el-radio-group v-model="videoStore.selectedAnalysisType" @change="onAnalysisTypeChange">
+              <el-radio-group
+                v-model="videoStore.selectedAnalysisType"
+                @change="onAnalysisTypeChange"
+              >
                 <el-radio
                   v-for="type in videoStore.analysisTypes"
                   :key="type.id"
@@ -97,14 +109,17 @@
                         :type="model.status === 'loaded' ? 'success' : 'info'"
                         size="small"
                       >
-                        {{ model.status === 'loaded' ? '已加载' : '未加载' }}
+                        {{ model.status === "loaded" ? "已加载" : "未加载" }}
                       </el-tag>
                       <span class="model-desc">{{ model.description }}</span>
                     </div>
                   </div>
                 </el-option>
               </el-select>
-              <div v-if="!videoStore.filteredModels.length" class="no-models-hint">
+              <div
+                v-if="!videoStore.filteredModels.length"
+                class="no-models-hint"
+              >
                 <el-text type="info" size="small">
                   当前分析类型暂无可用模型
                 </el-text>
@@ -114,17 +129,17 @@
             <el-form-item>
               <el-button
                 type="success"
-                @click="startAnalysis"
                 :disabled="videoStore.isAnalyzing"
                 :loading="startingAnalysis"
+                @click="startAnalysis"
               >
                 开始分析
               </el-button>
               <el-button
                 type="warning"
-                @click="stopAnalysis"
                 :disabled="!videoStore.isAnalyzing"
                 :loading="stoppingAnalysis"
+                @click="stopAnalysis"
               >
                 停止分析
               </el-button>
@@ -174,8 +189,7 @@
                 muted
                 playsinline
                 style="display: none"
-              >
-              </video>
+              ></video>
 
               <!-- WebRTC连接状态指示器 -->
               <div class="webrtc-status">
@@ -184,7 +198,9 @@
                   size="small"
                   effect="dark"
                 >
-                  {{ videoStore.webrtcConnected ? 'WebRTC已连接' : 'WebRTC未连接' }}
+                  {{
+                    videoStore.webrtcConnected ? "WebRTC已连接" : "WebRTC未连接"
+                  }}
                 </el-tag>
               </div>
 
@@ -197,7 +213,7 @@
                   type="primary"
                   size="small"
                   @click="requestVideoStream"
-                  >
+                >
                   <el-icon><CaretRight /></el-icon>
                   开始视频流
                 </el-button>
@@ -264,7 +280,8 @@
                 :type="getDetectionTagType(detection.confidence)"
                 size="small"
               >
-                {{ detection.class_name }} {{ Math.round(detection.confidence * 100) }}%
+                {{ detection.class_name }}
+                {{ Math.round(detection.confidence * 100) }}%
               </el-tag>
             </el-space>
           </div>
@@ -275,108 +292,120 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { useVideoStore } from '@/stores/videoStore'
-import type { DetectionResult } from '@/types'
-import { CaretRight, VideoPause, Camera } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
-import JpegVideoPlayer from '@/components/JpegVideoPlayer.vue'
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { useRouter } from "vue-router";
+import { useVideoStore } from "@/stores/videoStore";
+import type { DetectionResult } from "@/types";
+import { CaretRight, VideoPause, Camera } from "@element-plus/icons-vue";
+import { ElMessage } from "element-plus";
+import JpegVideoPlayer from "@/components/JpegVideoPlayer.vue";
 
-const router = useRouter()
-const videoStore = useVideoStore()
+const router = useRouter();
+const videoStore = useVideoStore();
 
 // 数据
-const videoElement = ref<HTMLVideoElement | null>(null)
-const jpegPlayerRef = ref<InstanceType<typeof JpegVideoPlayer> | null>(null)
-const startingAnalysis = ref(false)
-const stoppingAnalysis = ref(false)
+const videoElement = ref<HTMLVideoElement | null>(null);
+const jpegPlayerRef = ref<InstanceType<typeof JpegVideoPlayer> | null>(null);
+const startingAnalysis = ref(false);
+const stoppingAnalysis = ref(false);
 
 // 标签映射
 const typeLabels = {
-  camera: '摄像头',
-  file: '文件',
-  stream: '流'
-}
+  camera: "摄像头",
+  file: "文件",
+  stream: "流",
+};
 
 const statusLabels = {
-  active: '运行中',
-  inactive: '未激活',
-  error: '错误'
-}
+  active: "运行中",
+  inactive: "未激活",
+  error: "错误",
+};
 
 // 计算属性
 const selectedSourceName = computed(() => {
-  return videoStore.selectedSource?.name || '未选择'
-})
+  return videoStore.selectedSource?.name || "未选择";
+});
 
 const connectionStatusType = computed(() => {
   switch (videoStore.connectionStatus) {
-    case 'connected': return 'success'
-    case 'connecting': return 'warning'
-    default: return 'error'
+    case "connected":
+      return "success";
+    case "connecting":
+      return "warning";
+    default:
+      return "error";
   }
-})
+});
 
 const connectionStatusText = computed(() => {
   switch (videoStore.connectionStatus) {
-    case 'connected': return '已连接到后端服务'
-    case 'connecting': return '正在连接后端服务...'
-    default: return '后端服务连接失败'
+    case "connected":
+      return "已连接到后端服务";
+    case "connecting":
+      return "正在连接后端服务...";
+    default:
+      return "后端服务连接失败";
   }
-})
+});
 
 const recentResult = computed(() => {
-  return videoStore.recentAnalysisResults[0]
-})
+  return videoStore.recentAnalysisResults[0];
+});
 
 const currentDetectionCount = computed(() => {
-  return recentResult.value?.detections.length || 0
-})
+  return recentResult.value?.detections.length || 0;
+});
 
 const analysisFrameCount = computed(() => {
-  return videoStore.analysisResults.length
-})
+  return videoStore.analysisResults.length;
+});
 
 const averageConfidence = computed(() => {
-  if (!recentResult.value?.detections.length) return 0
-  const sum = recentResult.value.detections.reduce((acc, det) => acc + det.confidence, 0)
-  return Math.round((sum / recentResult.value.detections.length) * 100)
-})
+  if (!recentResult.value?.detections.length) return 0;
+  const sum = recentResult.value.detections.reduce(
+    (acc, det) => acc + det.confidence,
+    0,
+  );
+  return Math.round((sum / recentResult.value.detections.length) * 100);
+});
 
 const processingDelay = computed(() => {
   // 模拟处理延迟
-  return Math.round(Math.random() * 100 + 50)
-})
+  return Math.round(Math.random() * 100 + 50);
+});
 
 // 方法
 const startAnalysis = async () => {
-  startingAnalysis.value = true
+  startingAnalysis.value = true;
   try {
-    await videoStore.startAnalysis(videoStore.selectedSourceId, videoStore.selectedAnalysisType)
-    console.log('✅ 开始分析成功')
+    await videoStore.startAnalysis(
+      videoStore.selectedSourceId,
+      videoStore.selectedAnalysisType,
+    );
+    console.log("✅ 开始分析成功");
   } catch (error) {
-    console.error('❌ 开始分析失败:', error)
+    console.error("❌ 开始分析失败:", error);
     // 显示错误提示
-    ElMessage.error('开始分析失败: ' + (error as Error).message)
+    ElMessage.error("开始分析失败: " + (error as Error).message);
   } finally {
-    startingAnalysis.value = false
+    startingAnalysis.value = false;
   }
-}
+};
 
 const stopAnalysis = async () => {
-  stoppingAnalysis.value = true
+  stoppingAnalysis.value = true;
   try {
-    await videoStore.stopAnalysis(videoStore.selectedSourceId)
-    console.log('✅ 停止分析成功')
+    await videoStore.stopAnalysis(videoStore.selectedSourceId);
+    console.log("✅ 停止分析成功");
   } catch (error) {
-    console.error('❌ 停止分析失败:', error)
+    console.error("❌ 停止分析失败:", error);
     // 显示错误提示
-    ElMessage.error('停止分析失败: ' + (error as Error).message)
+    ElMessage.error("停止分析失败: " + (error as Error).message);
   } finally {
-    stoppingAnalysis.value = false
+    stoppingAnalysis.value = false;
   }
-}
+};
 
 const getDetectionBoxStyle = (detection: DetectionResult) => {
   return {
@@ -384,148 +413,154 @@ const getDetectionBoxStyle = (detection: DetectionResult) => {
     top: `${detection.bbox.y}px`,
     width: `${detection.bbox.width}px`,
     height: `${detection.bbox.height}px`,
-  }
-}
+  };
+};
 
 const getDetectionTagType = (confidence: number) => {
-  if (confidence >= 0.8) return 'success'
-  if (confidence >= 0.6) return 'warning'
-  return 'danger'
-}
+  if (confidence >= 0.8) return "success";
+  if (confidence >= 0.6) return "warning";
+  return "danger";
+};
 
 const goToSourceManager = () => {
-  router.push('/video-source-manager')
-}
+  router.push("/video-source-manager");
+};
 
 // 模型选择相关方法
 const onAnalysisTypeChange = (analysisType: string) => {
-  videoStore.setSelectedAnalysisType(analysisType)
-}
+  videoStore.setSelectedAnalysisType(analysisType);
+};
 
 const onModelChange = async (modelId: string) => {
   try {
-    await videoStore.setSelectedModel(modelId)
+    await videoStore.setSelectedModel(modelId);
   } catch (error) {
-    console.error('切换模型失败:', error)
-    ElMessage.error('切换模型失败')
+    console.error("切换模型失败:", error);
+    ElMessage.error("切换模型失败");
   }
-}
+};
 
 // WebRTC相关方法
 const requestVideoStream = async () => {
   // 如果WebRTC未连接，先重新连接
   if (!videoStore.webrtcConnected) {
-    console.log('🔗 WebRTC未连接，正在重新连接...')
-    await videoStore.connectWebRTC()
+    console.log("🔗 WebRTC未连接，正在重新连接...");
+    await videoStore.connectWebRTC();
     // 等待连接建立后再请求视频流
     setTimeout(() => {
-      videoStore.requestVideoStream()
-    }, 1000)
+      videoStore.requestVideoStream();
+    }, 1000);
   } else {
-    videoStore.requestVideoStream()
+    videoStore.requestVideoStream();
   }
-}
+};
 
 const stopVideoStream = () => {
   // 断开WebRTC连接
-  videoStore.disconnectWebRTC()
+  videoStore.disconnectWebRTC();
 
   // 清理本地视频元素
   if (videoElement.value) {
-    videoElement.value.srcObject = null
+    videoElement.value.srcObject = null;
   }
 
   // 清理JPEG播放器
   if (jpegPlayerRef.value) {
-    jpegPlayerRef.value.clearCanvas()
+    jpegPlayerRef.value.clearCanvas();
   }
 
-  console.log('🛑 视频流已停止')
-}
+  console.log("🛑 视频流已停止");
+};
 
 // JPEG播放器事件处理
 const onFrameReceived = (width: number, height: number) => {
   // 帧接收处理（不输出日志）
-}
+};
 
 const onVideoError = (message: string) => {
-  console.error('❌ JPEG播放器错误:', message)
-}
+  console.error("❌ JPEG播放器错误:", message);
+};
 
 // 监听视频源变化，更新分析状态并重新请求视频流
-watch(() => videoStore.selectedSourceId, async (newSourceId, oldSourceId) => {
-  if (newSourceId && newSourceId !== oldSourceId) {
-    console.log('📹 视频源已切换:', oldSourceId, '->', newSourceId)
+watch(
+  () => videoStore.selectedSourceId,
+  async (newSourceId, oldSourceId) => {
+    if (newSourceId && newSourceId !== oldSourceId) {
+      console.log("📹 视频源已切换:", oldSourceId, "->", newSourceId);
 
-    // 如果WebRTC已连接，直接请求新源的视频流（不需要断开重连）
-    if (videoStore.webrtcConnected) {
-      console.log('🔄 保持WebRTC连接，切换到新源:', newSourceId)
-      // 稍等一下让selectedSourceId更新完成
-      await new Promise(resolve => setTimeout(resolve, 100))
-      videoStore.requestVideoStream()
-    } else {
-      // 如果未连接，先连接再请求
-      console.log('🔗 WebRTC未连接，正在连接并请求新源:', newSourceId)
-      await videoStore.connectWebRTC()
-      setTimeout(() => {
-        videoStore.requestVideoStream()
-      }, 1000)
+      // 如果WebRTC已连接，直接请求新源的视频流（不需要断开重连）
+      if (videoStore.webrtcConnected) {
+        console.log("🔄 保持WebRTC连接，切换到新源:", newSourceId);
+        // 稍等一下让selectedSourceId更新完成
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        videoStore.requestVideoStream();
+      } else {
+        // 如果未连接，先连接再请求
+        console.log("🔗 WebRTC未连接，正在连接并请求新源:", newSourceId);
+        await videoStore.connectWebRTC();
+        setTimeout(() => {
+          videoStore.requestVideoStream();
+        }, 1000);
+      }
+
+      // 更新分析状态
+      await videoStore.getAnalysisStatus();
     }
-
-    // 更新分析状态
-    await videoStore.getAnalysisStatus()
-  }
-})
+  },
+);
 
 // 生命周期
 onMounted(async () => {
-  console.log('🎬 VideoAnalysis组件已挂载')
-  videoStore.init()
+  console.log("🎬 VideoAnalysis组件已挂载");
+  videoStore.init();
 
   // 等待WebRTC连接建立和DOM更新
   setTimeout(async () => {
-    console.log('🎥 准备设置视频元素和JPEG播放器')
+    console.log("🎥 准备设置视频元素和JPEG播放器");
 
     // 设置JPEG视频播放器
     if (jpegPlayerRef.value) {
-      console.log('📹 找到JPEG播放器，正在设置到store')
-      videoStore.setJpegVideoPlayer(jpegPlayerRef.value)
+      console.log("📹 找到JPEG播放器，正在设置到store");
+      videoStore.setJpegVideoPlayer(jpegPlayerRef.value);
     } else {
-      console.error('❌ JPEG播放器未找到')
+      console.error("❌ JPEG播放器未找到");
     }
 
     // 设置备用视频元素
     if (videoElement.value) {
-      console.log('📹 找到视频元素，正在设置到store')
-      videoStore.setVideoElement(videoElement.value)
+      console.log("📹 找到视频元素，正在设置到store");
+      videoStore.setVideoElement(videoElement.value);
     }
 
     // 每个客户端独立：刷新后自动开启分析
     if (videoStore.selectedSourceId) {
-      console.log('🎬 自动开启分析（新连接默认开启）')
+      console.log("🎬 自动开启分析（新连接默认开启）");
       try {
-        await videoStore.startAnalysis(videoStore.selectedSourceId, videoStore.selectedAnalysisType)
+        await videoStore.startAnalysis(
+          videoStore.selectedSourceId,
+          videoStore.selectedAnalysisType,
+        );
       } catch (error) {
-        console.error('自动开启分析失败:', error)
+        console.error("自动开启分析失败:", error);
       }
     }
 
     // 自动请求视频流（如果已选择源）
     if (videoStore.selectedSourceId) {
-      console.log('🎬 自动请求视频流, sourceId:', videoStore.selectedSourceId)
+      console.log("🎬 自动请求视频流, sourceId:", videoStore.selectedSourceId);
       setTimeout(() => {
-        videoStore.requestVideoStream()
-      }, 500)
+        videoStore.requestVideoStream();
+      }, 500);
     }
-  }, 1000) // 增加延迟确保WebRTC客户端已初始化
-})
+  }, 1000); // 增加延迟确保WebRTC客户端已初始化
+});
 
 onUnmounted(() => {
   // 清理WebRTC连接
-  videoStore.disconnectWebRTC()
-  startingAnalysis.value = false
-  stoppingAnalysis.value = false
-})
+  videoStore.disconnectWebRTC();
+  startingAnalysis.value = false;
+  stoppingAnalysis.value = false;
+});
 </script>
 
 <style scoped>

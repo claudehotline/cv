@@ -7,8 +7,8 @@
           <el-button
             type="primary"
             size="small"
-            @click="refreshData"
             :loading="appStore.globalLoading"
+            @click="refreshData"
           >
             刷新数据
           </el-button>
@@ -21,8 +21,8 @@
         <el-select
           v-model="appStore.selectedSourceId"
           placeholder="选择视频源"
-          @change="handleSourceChange"
           style="width: 100%"
+          @change="handleSourceChange"
         >
           <el-option
             v-for="source in videoSourceStore.activeVideoSources"
@@ -58,7 +58,7 @@
               size="small"
               style="float: right"
             >
-              {{ model.status === 'loaded' ? '已加载' : '可用' }}
+              {{ model.status === "loaded" ? "已加载" : "可用" }}
             </el-tag>
           </el-option>
         </el-select>
@@ -85,9 +85,9 @@
           v-if="!appStore.isAnalysisRunning"
           type="primary"
           size="large"
-          @click="startAnalysis"
           :disabled="!canStartAnalysis"
           :loading="appStore.globalLoading"
+          @click="startAnalysis"
         >
           开始分析
         </el-button>
@@ -95,22 +95,24 @@
           v-else
           type="danger"
           size="large"
-          @click="stopAnalysis"
           :loading="appStore.globalLoading"
+          @click="stopAnalysis"
         >
           停止分析
         </el-button>
       </div>
 
       <!-- 状态显示 -->
-      <div class="section status" v-if="appStore.selectedSourceTask">
+      <div v-if="appStore.selectedSourceTask" class="section status">
         <h3>分析状态</h3>
         <el-descriptions :column="2" border>
           <el-descriptions-item label="任务ID">
             {{ appStore.selectedSourceTask.task_id }}
           </el-descriptions-item>
           <el-descriptions-item label="状态">
-            <el-tag :type="getStatusTagType(appStore.selectedSourceTask.status)">
+            <el-tag
+              :type="getStatusTagType(appStore.selectedSourceTask.status)"
+            >
               {{ getStatusText(appStore.selectedSourceTask.status) }}
             </el-tag>
           </el-descriptions-item>
@@ -125,7 +127,10 @@
     </el-card>
 
     <!-- 分析结果 -->
-    <el-card class="results-panel" v-if="appStore.selectedSourceResults.length > 0">
+    <el-card
+      v-if="appStore.selectedSourceResults.length > 0"
+      class="results-panel"
+    >
       <template #header>
         <span>最新分析结果</span>
       </template>
@@ -140,23 +145,24 @@
             <span class="timestamp">
               {{ formatTimestamp(result.timestamp) }}
             </span>
-            <span class="frame-id">
-              帧 #{{ result.request_id }}
-            </span>
+            <span class="frame-id"> 帧 #{{ result.request_id }} </span>
           </div>
-          <div class="detections" v-if="result.detections && result.detections.length > 0">
+          <div
+            v-if="result.detections && result.detections.length > 0"
+            class="detections"
+          >
             <el-tag
               v-for="(detection, index) in result.detections"
               :key="index"
               class="detection-tag"
               size="small"
             >
-              {{ detection.class_name }} ({{ (detection.confidence * 100).toFixed(1) }}%)
+              {{ detection.class_name }} ({{
+                (detection.confidence * 100).toFixed(1)
+              }}%)
             </el-tag>
           </div>
-          <div v-else class="no-detections">
-            无检测结果
-          </div>
+          <div v-else class="no-detections">无检测结果</div>
         </div>
       </div>
     </el-card>
@@ -164,102 +170,114 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
-import { useAppStore } from '@/stores/appStore'
-import { ElMessage } from 'element-plus'
+import { computed, watch } from "vue";
+import { useAppStore } from "@/stores/appStore";
+import { ElMessage } from "element-plus";
 
-const appStore = useAppStore()
-const videoSourceStore = appStore.videoSourceStore
-const analysisStore = appStore.analysisStore
+const appStore = useAppStore();
+const videoSourceStore = appStore.videoSourceStore;
+const analysisStore = appStore.analysisStore;
 
 // 监听模型选择变化，自动切换模型
-watch(() => analysisStore.selectedModelId, async (newModelId, oldModelId) => {
-  if (newModelId && newModelId !== oldModelId && oldModelId !== '') {
-    try {
-      await analysisStore.loadModel(newModelId)
-      ElMessage.success(`已切换到模型: ${newModelId}`)
-    } catch (error: any) {
-      ElMessage.error(`模型切换失败: ${error.message}`)
+watch(
+  () => analysisStore.selectedModelId,
+  async (newModelId, oldModelId) => {
+    if (newModelId && newModelId !== oldModelId && oldModelId !== "") {
+      try {
+        await analysisStore.loadModel(newModelId);
+        ElMessage.success(`已切换到模型: ${newModelId}`);
+      } catch (error: any) {
+        ElMessage.error(`模型切换失败: ${error.message}`);
+      }
     }
-  }
-})
+  },
+);
 
 // 计算属性
-const canStartAnalysis = computed(() =>
-  appStore.selectedSourceId &&
-  analysisStore.selectedModelId &&
-  !appStore.globalLoading
-)
+const canStartAnalysis = computed(
+  () =>
+    appStore.selectedSourceId &&
+    analysisStore.selectedModelId &&
+    !appStore.globalLoading,
+);
 
 // 方法
 const handleSourceChange = (sourceId: string) => {
-  appStore.setSelectedSource(sourceId)
-}
+  appStore.setSelectedSource(sourceId);
+};
 
 const refreshData = async () => {
   try {
-    await appStore.refreshAllData()
-    ElMessage.success('数据刷新成功')
+    await appStore.refreshAllData();
+    ElMessage.success("数据刷新成功");
   } catch (error) {
-    ElMessage.error('数据刷新失败')
+    ElMessage.error("数据刷新失败");
   }
-}
+};
 
 const startAnalysis = async () => {
   if (!appStore.selectedSourceId || !analysisStore.selectedModelId) {
-    ElMessage.warning('请先选择视频源和AI模型')
-    return
+    ElMessage.warning("请先选择视频源和AI模型");
+    return;
   }
 
   try {
     await appStore.startFullAnalysisWorkflow(
       appStore.selectedSourceId,
       analysisStore.selectedModelId,
-      analysisStore.selectedAnalysisType
-    )
-    ElMessage.success('分析任务启动成功')
+      analysisStore.selectedAnalysisType,
+    );
+    ElMessage.success("分析任务启动成功");
   } catch (error: any) {
-    ElMessage.error(`启动分析失败: ${error.message}`)
+    ElMessage.error(`启动分析失败: ${error.message}`);
   }
-}
+};
 
 const stopAnalysis = async () => {
   if (!appStore.selectedSourceId) {
-    return
+    return;
   }
 
   try {
-    await appStore.stopFullAnalysisWorkflow(appStore.selectedSourceId)
-    ElMessage.success('分析任务已停止')
+    await appStore.stopFullAnalysisWorkflow(appStore.selectedSourceId);
+    ElMessage.success("分析任务已停止");
   } catch (error: any) {
-    ElMessage.error(`停止分析失败: ${error.message}`)
+    ElMessage.error(`停止分析失败: ${error.message}`);
   }
-}
+};
 
 const getStatusTagType = (status: string) => {
   switch (status) {
-    case 'running': return 'success'
-    case 'stopped': return 'info'
-    case 'error': return 'danger'
-    default: return 'info'
+    case "running":
+      return "success";
+    case "stopped":
+      return "info";
+    case "error":
+      return "danger";
+    default:
+      return "info";
   }
-}
+};
 
 const getStatusText = (status: string) => {
   switch (status) {
-    case 'running': return '运行中'
-    case 'stopped': return '已停止'
-    case 'error': return '错误'
-    default: return '未知'
+    case "running":
+      return "运行中";
+    case "stopped":
+      return "已停止";
+    case "error":
+      return "错误";
+    default:
+      return "未知";
   }
-}
+};
 
 const formatTimestamp = (timestamp: number) => {
-  return new Date(timestamp * 1000).toLocaleTimeString()
-}
+  return new Date(timestamp * 1000).toLocaleTimeString();
+};
 
 // 初始化
-appStore.init()
+appStore.init();
 </script>
 
 <style scoped>

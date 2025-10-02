@@ -15,14 +15,14 @@
 
 namespace va {
 
-va::core::Factories buildFactories(va::core::EngineManager& /*engine_manager*/) {
+va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
     va::core::Factories factories;
 
     factories.make_source = [](const va::core::SourceConfig& cfg) {
         return std::make_shared<va::media::SwitchableRtspSource>(cfg.uri);
     };
 
-    factories.make_filter = [](const va::core::FilterConfig& cfg) {
+    factories.make_filter = [&engine_manager](const va::core::FilterConfig& cfg) {
         auto analyzer = std::make_shared<va::analyzer::Analyzer>();
 
         auto preprocessor = std::make_shared<va::analyzer::LetterboxPreprocessorCPU>(cfg.input_width, cfg.input_height);
@@ -30,7 +30,10 @@ va::core::Factories buildFactories(va::core::EngineManager& /*engine_manager*/) 
 
         auto session = std::make_shared<va::analyzer::OrtModelSession>();
         const std::string& model_path = !cfg.model_path.empty() ? cfg.model_path : cfg.model_id;
-        session->loadModel(model_path, false);
+        auto engine = engine_manager.currentEngine();
+        const bool use_gpu = (!engine.provider.empty() && engine.provider.find("cuda") != std::string::npos) ||
+                             (!engine.name.empty() && engine.name.find("cuda") != std::string::npos);
+        session->loadModel(model_path, use_gpu);
         analyzer->setSession(session);
 
         std::shared_ptr<va::analyzer::IPostprocessor> postprocessor;

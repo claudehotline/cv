@@ -18,7 +18,7 @@ public:
     OrtModelSession();
     ~OrtModelSession();
 
-    bool loadModel(const std::string& model_path, bool use_gpu);
+    bool loadModel(const std::string& model_path, bool use_gpu) override;
     bool run(const core::TensorView& input, std::vector<core::TensorView>& outputs) override;
 
 private:

@@ -8,7 +8,7 @@
 
 namespace {
 
-Json::Value modelToJson(const DetectionModelEntry& model, uint32_t active) {
+Json::Value modelToJson(const DetectionModelEntry& model, uint32_t active, bool selected) {
     Json::Value entry;
     entry["id"] = model.id;
     entry["task"] = model.task;
@@ -21,6 +21,7 @@ Json::Value modelToJson(const DetectionModelEntry& model, uint32_t active) {
     entry["confidence_threshold"] = model.conf;
     entry["nms_threshold"] = model.iou;
     entry["active_pipelines"] = active;
+    entry["active"] = selected;
     return entry;
 }
 
@@ -134,10 +135,11 @@ void AnalysisAPI::setupRoutes() {
         return handlePipelines(req);
     });
 
-    // Legacy endpoints return 501 to indicate pending implementation
-    http_server_->POST("/api/models/load", [this](const HTTPServer::Request&) {
-        return notImplemented("models/load");
+    http_server_->POST("/api/models/load", [this](const HTTPServer::Request& req) {
+        return handleLoadModel(req);
     });
+
+    // Legacy endpoints return 501 to indicate pending implementation
     http_server_->POST("/api/models/unload", [this](const HTTPServer::Request&) {
         return notImplemented("models/unload");
     });
@@ -198,7 +200,8 @@ HTTPServer::Response AnalysisAPI::handleGetModels(const HTTPServer::Request&) {
     for (const auto& model : app_->detectionModels()) {
         const auto it = usage.find(model.id);
         const uint32_t active = it != usage.end() ? it->second : 0;
-        arr.append(modelToJson(model, active));
+        const bool selected = app_->isModelActive(model.id);
+        arr.append(modelToJson(model, active, selected));
     }
     return HTTPServer::jsonResponse(createSuccessResponse(arr));
 }
@@ -216,6 +219,46 @@ HTTPServer::Response AnalysisAPI::handleGetProfiles(const HTTPServer::Request&) 
     return HTTPServer::jsonResponse(createSuccessResponse(arr));
 }
 
+HTTPServer::Response AnalysisAPI::handleLoadModel(const HTTPServer::Request& req) {
+    if (!app_) {
+        return HTTPServer::errorResponse("application not initialized", 500);
+    }
+
+    Json::Value body;
+    try {
+        body = HTTPServer::parseJsonBody(req.body);
+    } catch (const std::exception& e) {
+        return HTTPServer::errorResponse(std::string("invalid json: ") + e.what(), 400);
+    }
+
+    const std::string model_id = body.get("model_id", "").asString();
+    if (model_id.empty()) {
+        return HTTPServer::errorResponse("model_id required", 400);
+    }
+
+    const auto& models = app_->detectionModels();
+    auto it = std::find_if(models.begin(), models.end(), [&](const DetectionModelEntry& entry) {
+        return entry.id == model_id;
+    });
+    if (it == models.end()) {
+        return HTTPServer::errorResponse("model not found", 404);
+    }
+
+    if (!app_->loadModel(model_id)) {
+        return HTTPServer::errorResponse("failed to activate model", 500);
+    }
+
+    uint32_t active = 0;
+    for (const auto& info : app_->pipelines()) {
+        if (info.model_id == model_id) {
+            active++;
+        }
+    }
+
+    Json::Value data = modelToJson(*it, active, app_->isModelActive(model_id));
+    return HTTPServer::jsonResponse(createSuccessResponse(data));
+}
+
 HTTPServer::Response AnalysisAPI::handleSubscribe(const HTTPServer::Request& req) {
     if (!app_) {
         return HTTPServer::errorResponse("application not initialized", 500);
@@ -231,12 +274,18 @@ HTTPServer::Response AnalysisAPI::handleSubscribe(const HTTPServer::Request& req
     const std::string stream = body.get("stream", "").asString();
     const std::string profile = body.get("profile", "").asString();
     const std::string uri = body.get("url", body.get("uri", "").asString()).asString();
+    const std::string requested_model = body.get("model_id", "").asString();
 
     if (stream.empty() || profile.empty() || uri.empty()) {
         return HTTPServer::errorResponse("stream/profile/url required", 400);
     }
 
-    auto key = app_->subscribeStream(stream, profile, uri);
+    std::optional<std::string> model_override;
+    if (!requested_model.empty()) {
+        model_override = requested_model;
+    }
+
+    auto key = app_->subscribeStream(stream, profile, uri, model_override);
     if (!key) {
         return HTTPServer::errorResponse("subscribe failed", 500);
     }
@@ -246,6 +295,20 @@ HTTPServer::Response AnalysisAPI::handleSubscribe(const HTTPServer::Request& req
     data["profile"] = profile;
     data["pipeline_key"] = *key;
     data["status"] = "subscribed";
+
+    std::string effective_model;
+    for (const auto& info : app_->pipelines()) {
+        if (info.key == *key) {
+            effective_model = info.model_id;
+            break;
+        }
+    }
+    if (!effective_model.empty()) {
+        data["model_id"] = effective_model;
+    } else if (!requested_model.empty()) {
+        data["model_id"] = requested_model;
+    }
+
     return HTTPServer::jsonResponse(createSuccessResponse(data), 201);
 }
 

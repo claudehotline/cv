@@ -3,6 +3,7 @@
 #include "core/utils.hpp"
 
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace va::analyzer {
@@ -19,6 +20,7 @@ struct IPreprocessor {
 
 struct IModelSession {
     virtual ~IModelSession() = default;
+    virtual bool loadModel(const std::string& model_path, bool use_gpu) = 0;
     virtual bool run(const TensorView& input, std::vector<TensorView>& outputs) = 0;
 };
 

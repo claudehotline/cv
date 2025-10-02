@@ -17,25 +17,41 @@
             </div>
           </template>
 
-          <el-table :data="videoStore.videoSources" size="small" max-height="400">
+          <el-table
+            :data="videoStore.videoSources"
+            size="small"
+            max-height="400"
+          >
             <el-table-column prop="name" label="名称" width="120" />
             <el-table-column prop="type" label="类型" width="80">
               <template #default="{ row }">
                 <el-tag
-                  :type="row.type === 'camera' ? 'success' : row.type === 'file' ? 'info' : 'warning'"
+                  :type="
+                    row.type === 'camera'
+                      ? 'success'
+                      : row.type === 'file'
+                        ? 'info'
+                        : 'warning'
+                  "
                   size="small"
                 >
-                  {{ typeLabels[row.type] }}
+                  {{ getTypeLabel(row.type) }}
                 </el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="status" label="状态" width="80">
               <template #default="{ row }">
                 <el-tag
-                  :type="row.status === 'active' ? 'success' : row.status === 'inactive' ? 'info' : 'danger'"
+                  :type="
+                    row.status === 'active'
+                      ? 'success'
+                      : row.status === 'inactive'
+                        ? 'info'
+                        : 'danger'
+                  "
                   size="small"
                 >
-                  {{ statusLabels[row.status] }}
+                  {{ getStatusLabel(row.status) }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -100,15 +116,15 @@
             <el-form-item>
               <el-button
                 type="success"
-                @click="startAnalysis"
                 :disabled="!videoStore.selectedSourceId"
+                @click="startAnalysis"
               >
                 开始分析
               </el-button>
               <el-button
                 type="warning"
-                @click="stopAnalysis"
                 :disabled="!videoStore.selectedSourceId"
+                @click="stopAnalysis"
               >
                 停止分析
               </el-button>
@@ -159,8 +175,7 @@
                 muted
                 playsinline
                 style="display: none"
-              >
-              </video>
+              ></video>
 
               <!-- WebRTC连接状态指示器 -->
               <div class="webrtc-status">
@@ -169,7 +184,9 @@
                   size="small"
                   effect="dark"
                 >
-                  {{ videoStore.webrtcConnected ? 'WebRTC已连接' : 'WebRTC未连接' }}
+                  {{
+                    videoStore.webrtcConnected ? "WebRTC已连接" : "WebRTC未连接"
+                  }}
                 </el-tag>
               </div>
 
@@ -182,7 +199,9 @@
                   :style="getDetectionBoxStyle(detection)"
                 >
                   <span class="detection-label">
-                    {{ detection.class_name }} ({{ Math.round(detection.confidence * 100) }}%)
+                    {{ detection.class_name }} ({{
+                      Math.round(detection.confidence * 100)
+                    }}%)
                   </span>
                 </div>
               </div>
@@ -194,7 +213,7 @@
                   type="primary"
                   size="small"
                   @click="requestVideoStream"
-                  >
+                >
                   <el-icon><CaretRight /></el-icon>
                   开始视频流
                 </el-button>
@@ -226,10 +245,18 @@
               <el-statistic title="分析帧数" :value="analysisFrameCount" />
             </el-col>
             <el-col :span="6">
-              <el-statistic title="平均置信度" :value="averageConfidence" suffix="%" />
+              <el-statistic
+                title="平均置信度"
+                :value="averageConfidence"
+                suffix="%"
+              />
             </el-col>
             <el-col :span="6">
-              <el-statistic title="处理延迟" :value="processingDelay" suffix="ms" />
+              <el-statistic
+                title="处理延迟"
+                :value="processingDelay"
+                suffix="ms"
+              />
             </el-col>
           </el-row>
         </el-card>
@@ -247,7 +274,11 @@
           <el-input v-model="newSource.name" placeholder="请输入源名称" />
         </el-form-item>
         <el-form-item label="源类型">
-          <el-select v-model="newSource.type" placeholder="请选择类型" style="width: 100%">
+          <el-select
+            v-model="newSource.type"
+            placeholder="请选择类型"
+            style="width: 100%"
+          >
             <el-option label="摄像头" value="camera" />
             <el-option label="视频文件" value="file" />
             <el-option label="网络流" value="stream" />
@@ -273,116 +304,133 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useVideoStore } from '@/stores/videoStore'
-import type { DetectionResult } from '@/types'
-import { CaretRight, VideoPause, Camera } from '@element-plus/icons-vue'
-import JpegVideoPlayer from '@/components/JpegVideoPlayer.vue'
+import { ref, computed, onMounted, onUnmounted } from "vue";
+import { useVideoStore } from "@/stores/videoStore";
+import type { DetectionResult, VideoSource } from "@/types";
+import { CaretRight, VideoPause, Camera } from "@element-plus/icons-vue";
+import JpegVideoPlayer from "@/components/JpegVideoPlayer.vue";
 
-const videoStore = useVideoStore()
+const videoStore = useVideoStore();
 
 // 数据
-const addSourceDialogVisible = ref(false)
-const videoElement = ref<HTMLVideoElement | null>(null)
-const jpegPlayerRef = ref<InstanceType<typeof JpegVideoPlayer> | null>(null)
+const addSourceDialogVisible = ref(false);
+const videoElement = ref<HTMLVideoElement | null>(null);
+const jpegPlayerRef = ref<InstanceType<typeof JpegVideoPlayer> | null>(null);
 const newSource = ref({
-  name: '',
-  type: 'camera' as const,
-  url: '',
+  name: "",
+  type: "camera" as const,
+  url: "",
   fps: 30,
-  resolution: '1280x720'
-})
+  resolution: "1280x720",
+});
 
 // 标签映射
-const typeLabels = {
-  camera: '摄像头',
-  file: '文件',
-  stream: '流'
-}
+type VideoSourceType = VideoSource["type"];
+type VideoSourceStatus = VideoSource["status"];
 
-const statusLabels = {
-  active: '运行中',
-  inactive: '未激活',
-  error: '错误'
-}
+const typeLabels: Record<VideoSourceType, string> = {
+  camera: "\u6444\u50cf\u5934",
+  file: "\u6587\u4ef6",
+  stream: "\u6d41",
+};
 
-// 计算属性
+const statusLabels: Record<VideoSourceStatus, string> = {
+  active: "\u5df2\u542f\u7528",
+  inactive: "\u672a\u542f\u7528",
+  error: "\u5f02\u5e38",
+};
+
+const getTypeLabel = (type: VideoSourceType) => typeLabels[type];
+const getStatusLabel = (status: VideoSourceStatus) => statusLabels[status];
+
 const selectedSourceName = computed(() => {
-  return videoStore.selectedSource?.name || '未选择'
-})
+  return videoStore.selectedSource?.name || "未选择";
+});
 
 const selectedSourceType = computed(() => {
-  const source = videoStore.selectedSource
-  return source ? typeLabels[source.type] : ''
-})
+  const source = videoStore.selectedSource;
+  return source ? getTypeLabel(source.type) : "";
+});
 
 const connectionStatusType = computed(() => {
   switch (videoStore.connectionStatus) {
-    case 'connected': return 'success'
-    case 'connecting': return 'warning'
-    default: return 'error'
+    case "connected":
+      return "success";
+    case "connecting":
+      return "warning";
+    default:
+      return "error";
   }
-})
+});
 
 const connectionStatusText = computed(() => {
   switch (videoStore.connectionStatus) {
-    case 'connected': return '已连接到后端服务'
-    case 'connecting': return '正在连接后端服务...'
-    default: return '后端服务连接失败'
+    case "connected":
+      return "已连接到后端服务";
+    case "connecting":
+      return "正在连接后端服务...";
+    default:
+      return "后端服务连接失败";
   }
-})
+});
 
 const recentResult = computed(() => {
-  return videoStore.recentAnalysisResults[0]
-})
+  return videoStore.recentAnalysisResults[0];
+});
 
 const currentDetectionCount = computed(() => {
-  return recentResult.value?.detections.length || 0
-})
+  return recentResult.value?.detections.length || 0;
+});
 
 const analysisFrameCount = computed(() => {
-  return videoStore.analysisResults.length
-})
+  return videoStore.analysisResults.length;
+});
 
 const averageConfidence = computed(() => {
-  if (!recentResult.value?.detections.length) return 0
-  const sum = recentResult.value.detections.reduce((acc, det) => acc + det.confidence, 0)
-  return Math.round((sum / recentResult.value.detections.length) * 100)
-})
+  if (!recentResult.value?.detections.length) return 0;
+  const sum = recentResult.value.detections.reduce(
+    (acc, det) => acc + det.confidence,
+    0,
+  );
+  return Math.round((sum / recentResult.value.detections.length) * 100);
+});
 
 const processingDelay = computed(() => {
   // 模拟处理延迟
-  return Math.round(Math.random() * 100 + 50)
-})
+  return Math.round(Math.random() * 100 + 50);
+});
 
 // 方法
 const selectSource = (sourceId: string) => {
-  videoStore.setSelectedSource(sourceId)
-}
+  videoStore.setSelectedSource(sourceId);
+};
 
 const removeSource = (sourceId: string) => {
-  videoStore.removeVideoSource(sourceId)
-}
+  videoStore.removeVideoSource(sourceId);
+};
 
 const addVideoSource = () => {
-  videoStore.addVideoSource(newSource.value)
-  addSourceDialogVisible.value = false
+  videoStore.addVideoSource(newSource.value);
+  addSourceDialogVisible.value = false;
   newSource.value = {
-    name: '',
-    type: 'camera',
-    url: '',
+    name: "",
+    type: "camera",
+    url: "",
     fps: 30,
-    resolution: '1280x720'
-  }
-}
+    resolution: "1280x720",
+  };
+};
 
 const startAnalysis = () => {
-  videoStore.startAnalysis(videoStore.selectedSourceId, videoStore.selectedAnalysisType)
-}
+  videoStore.startAnalysis(
+    videoStore.selectedSourceId,
+    videoStore.selectedAnalysisType,
+  );
+};
 
 const stopAnalysis = () => {
-  videoStore.stopAnalysis(videoStore.selectedSourceId)
-}
+  videoStore.stopAnalysis(videoStore.selectedSourceId);
+};
 
 const getDetectionBoxStyle = (detection: DetectionResult) => {
   return {
@@ -390,73 +438,73 @@ const getDetectionBoxStyle = (detection: DetectionResult) => {
     top: `${detection.bbox.y}px`,
     width: `${detection.bbox.width}px`,
     height: `${detection.bbox.height}px`,
-  }
-}
+  };
+};
 
 // WebRTC相关方法
 const requestVideoStream = () => {
-  videoStore.requestVideoStream()
-}
+  videoStore.requestVideoStream();
+};
 
 const stopVideoStream = () => {
   // 停止当前视频流
   if (videoElement.value) {
-    videoElement.value.srcObject = null
+    videoElement.value.srcObject = null;
   }
   // 清理JPEG播放器
   if (jpegPlayerRef.value) {
-    jpegPlayerRef.value.clearCanvas()
+    jpegPlayerRef.value.clearCanvas();
   }
   // 这里可以发送停止信号给后端
-  videoStore.stopAnalysis(videoStore.selectedSourceId)
-}
+  videoStore.stopAnalysis(videoStore.selectedSourceId);
+};
 
 // JPEG播放器事件处理
 const onFrameReceived = (width: number, height: number) => {
-  console.log('📹 接收到JPEG帧:', width, 'x', height)
-}
+  console.log("📹 接收到JPEG帧:", width, "x", height);
+};
 
 const onVideoError = (message: string) => {
-  console.error('❌ JPEG播放器错误:', message)
-}
+  console.error("❌ JPEG播放器错误:", message);
+};
 
 // 生命周期
 onMounted(async () => {
-  console.log('🎬 VideoStreams组件已挂载')
-  videoStore.init()
+  console.log("🎬 VideoStreams组件已挂载");
+  videoStore.init();
 
   // 等待WebRTC连接建立和DOM更新
   setTimeout(() => {
-    console.log('🎥 准备设置视频元素和JPEG播放器')
+    console.log("🎥 准备设置视频元素和JPEG播放器");
 
     // 设置JPEG视频播放器
     if (jpegPlayerRef.value) {
-      console.log('📹 找到JPEG播放器，正在设置到store')
-      videoStore.setJpegVideoPlayer(jpegPlayerRef.value)
+      console.log("📹 找到JPEG播放器，正在设置到store");
+      videoStore.setJpegVideoPlayer(jpegPlayerRef.value);
     } else {
-      console.error('❌ JPEG播放器未找到')
+      console.error("❌ JPEG播放器未找到");
     }
 
     // 设置备用视频元素
     if (videoElement.value) {
-      console.log('📹 找到视频元素，正在设置到store')
-      videoStore.setVideoElement(videoElement.value)
+      console.log("📹 找到视频元素，正在设置到store");
+      videoStore.setVideoElement(videoElement.value);
     }
 
     // 自动请求视频流（如果已选择源）
     if (videoStore.selectedSourceId) {
-      console.log('🎬 自动请求视频流, sourceId:', videoStore.selectedSourceId)
+      console.log("🎬 自动请求视频流, sourceId:", videoStore.selectedSourceId);
       setTimeout(() => {
-        videoStore.requestVideoStream()
-      }, 500)
+        videoStore.requestVideoStream();
+      }, 500);
     }
-  }, 1000) // 增加延迟确保WebRTC客户端已初始化
-})
+  }, 1000); // 增加延迟确保WebRTC客户端已初始化
+});
 
 onUnmounted(() => {
   // 清理WebRTC连接
-  videoStore.disconnectWebRTC()
-})
+  videoStore.disconnectWebRTC();
+});
 </script>
 
 <style scoped>
@@ -513,12 +561,17 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   color: #999;
-  background: linear-gradient(45deg, #333 25%, transparent 25%),
-              linear-gradient(-45deg, #333 25%, transparent 25%),
-              linear-gradient(45deg, transparent 75%, #333 75%),
-              linear-gradient(-45deg, transparent 75%, #333 75%);
+  background:
+    linear-gradient(45deg, #333 25%, transparent 25%),
+    linear-gradient(-45deg, #333 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #333 75%),
+    linear-gradient(-45deg, transparent 75%, #333 75%);
   background-size: 20px 20px;
-  background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+  background-position:
+    0 0,
+    0 10px,
+    10px -10px,
+    -10px 0px;
   border-radius: 8px;
   z-index: 1;
 }

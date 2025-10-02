@@ -5,6 +5,8 @@
 #include "media/source.hpp"
 #include "media/transport.hpp"
 
+#include <iostream>
+
 namespace va::core {
 
 PipelineBuilder::PipelineBuilder(const Factories& factories, EngineManager& engine_manager)
@@ -19,7 +21,20 @@ std::shared_ptr<Pipeline> PipelineBuilder::build(const SourceConfig& source_cfg,
     auto encoder = factories_.make_encoder ? factories_.make_encoder(encoder_cfg) : nullptr;
     auto transport = factories_.make_transport ? factories_.make_transport(transport_cfg) : nullptr;
 
-    if (!source || !analyzer || !encoder || !transport) {
+    if (!source) {
+        std::cerr << "[PipelineBuilder] failed to create source for URI " << source_cfg.uri << std::endl;
+        return nullptr;
+    }
+    if (!analyzer) {
+        std::cerr << "[PipelineBuilder] failed to create analyzer for model " << filter_cfg.model_id << std::endl;
+        return nullptr;
+    }
+    if (!encoder) {
+        std::cerr << "[PipelineBuilder] failed to create encoder for stream " << source_cfg.stream_id << std::endl;
+        return nullptr;
+    }
+    if (!transport) {
+        std::cerr << "[PipelineBuilder] failed to create transport for stream " << source_cfg.stream_id << std::endl;
         return nullptr;
     }
 
@@ -39,10 +54,14 @@ std::shared_ptr<Pipeline> PipelineBuilder::build(const SourceConfig& source_cfg,
     encoder_settings.codec = encoder_cfg.codec;
 
     if (!encoder->open(encoder_settings)) {
+        std::cerr << "[PipelineBuilder] encoder open failed for stream " << source_cfg.stream_id
+                  << " (" << encoder_settings.width << "x" << encoder_settings.height << "@" << encoder_settings.fps
+                  << ", codec=" << encoder_settings.codec << ")" << std::endl;
         return nullptr;
     }
 
     if (!transport_cfg.whip_url.empty() && !transport->connect(transport_cfg.whip_url)) {
+        std::cerr << "[PipelineBuilder] transport connect failed for URL " << transport_cfg.whip_url << std::endl;
         return nullptr;
     }
 

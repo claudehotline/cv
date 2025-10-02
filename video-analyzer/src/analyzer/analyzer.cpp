@@ -43,11 +43,22 @@ bool Analyzer::analyze(const core::Frame& in, core::Frame& out) {
         return false;
     }
 
+    if (params_) {
+        for (auto& box : model_output.boxes) {
+            box.score = std::min(std::max(box.score, 0.0f), 1.0f);
+        }
+    }
+
     return renderer_->draw(in, model_output, out);
 }
 
-bool Analyzer::switchModel(const std::string& /*model_id*/) {
-    // TODO: implement model switching in subsequent stages
+bool Analyzer::switchModel(const std::string& model_id) {
+    if (!session_) {
+        return false;
+    }
+    if (!session_->loadModel(model_id, false)) {
+        return false;
+    }
     return true;
 }
 

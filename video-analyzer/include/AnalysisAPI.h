@@ -24,6 +24,7 @@ private:
     HTTPServer::Response notImplemented(const std::string& feature);
     HTTPServer::Response handleGetModels(const HTTPServer::Request& req);
     HTTPServer::Response handleGetProfiles(const HTTPServer::Request& req);
+    HTTPServer::Response handleLoadModel(const HTTPServer::Request& req);
     HTTPServer::Response handleSubscribe(const HTTPServer::Request& req);
     HTTPServer::Response handleUnsubscribe(const HTTPServer::Request& req);
     HTTPServer::Response handlePipelines(const HTTPServer::Request& req);

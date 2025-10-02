@@ -1,47 +1,47 @@
-import { defineConfig } from 'vite'
-import vue from '@vitejs/plugin-vue'
-import { resolve } from 'path'
+import { defineConfig } from "vite";
+import vue from "@vitejs/plugin-vue";
+import { resolve } from "path";
 
 export default defineConfig({
   plugins: [vue()],
   resolve: {
     alias: {
-      '@': resolve(__dirname, './src')
-    }
+      "@": resolve(__dirname, "./src"),
+    },
   },
   server: {
-    host: 'localhost',
+    host: "localhost",
     port: 30000,
     proxy: {
       // 视频源管理API代理
-      '/api/source-manager': {
-        target: 'http://localhost:8081/api',
+      "/api/source-manager": {
+        target: "http://localhost:8081/api",
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/source-manager/, '')
+        rewrite: (path) => path.replace(/^\/api\/source-manager/, ""),
       },
       // 视频分析API代理
-      '/api/analyzer': {
-        target: 'http://localhost:8082/api',
+      "/api/analyzer": {
+        target: "http://localhost:8082/api",
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/analyzer/, '')
+        rewrite: (path) => path.replace(/^\/api\/analyzer/, ""),
       },
       // WebRTC信令服务代理
-      '/signaling': {
-        target: 'ws://localhost:8083',
-        ws: true,
-        changeOrigin: true
-      },
-      // WebRTC WebSocket代理
-      '/api/webrtc': {
-        target: 'ws://localhost:8083',
+      "/signaling": {
+        target: "ws://localhost:8083",
         ws: true,
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/webrtc/, '')
-      }
-    }
+      },
+      // WebRTC WebSocket代理
+      "/api/webrtc": {
+        target: "ws://localhost:8083",
+        ws: true,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/webrtc/, ""),
+      },
+    },
   },
   build: {
-    outDir: 'dist',
-    assetsDir: 'assets'
-  }
-})
+    outDir: "dist",
+    assetsDir: "assets",
+  },
+});

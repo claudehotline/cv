@@ -1,0 +1,37 @@
+engine:
+  type: ort-cpu
+  device: 0
+  options: {}
+sfu:
+  whip_base: "http://mediamtx:8889"
+  whep_base: "http://mediamtx:8889"
+orchestration:
+  idle_timeout_ms: 60000
+  reap_interval_ms: 5000
+defaults:
+  decoder:
+    impl: ffmpeg
+    rtsp:
+      prefer_tcp: true
+      timeout_ms: 5000
+  encoder:
+    impl: ffmpeg_h264
+    width: 1280
+    height: 720
+    fps: 30
+    bitrate_kbps: 3500
+    gop: 60
+    bframes: 0
+    preset: veryfast
+    tune_zerolatency: true
+security:
+  allowed_source_schemes:
+    - rtsp
+    - rtsps
+  switch_limits:
+    source_per_stream_per_sec: 0.2
+    model_per_stream_per_sec: 0.5
+observability:
+  log_level: info
+  metrics:
+    prom_endpoint: "0.0.0.0:9090"

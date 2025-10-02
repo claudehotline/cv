@@ -166,12 +166,13 @@ bool Pipeline::processFrame(const core::Frame& in) {
     }
 
     va::media::IEncoder::Packet packet;
-    if (encoder_ && !encoder_->encode(analyzed, packet)) {
-        return false;
-    }
-
-    if (transport_ && !packet.data.empty()) {
-        transport_->send(track_id_, packet.data.data(), packet.data.size());
+    if (encoder_) {
+        if (!encoder_->encode(analyzed, packet)) {
+            return false;
+        }
+        if (transport_ && !packet.data.empty()) {
+            transport_->send(track_id_, packet.data.data(), packet.data.size());
+        }
     }
     return true;
 }

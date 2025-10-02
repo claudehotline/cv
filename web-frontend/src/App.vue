@@ -42,8 +42,13 @@
 </template>
 
 <script setup lang="ts">
-import { RouterView } from 'vue-router'
-import { Camera, TrendCharts, Setting, VideoPlay } from '@element-plus/icons-vue'
+import { RouterView } from "vue-router";
+import {
+  Camera,
+  TrendCharts,
+  Setting,
+  VideoPlay,
+} from "@element-plus/icons-vue";
 </script>
 
 <style scoped>

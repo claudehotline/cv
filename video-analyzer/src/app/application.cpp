@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+#include <iostream>
 #include <utility>
 
 namespace va::app {
@@ -18,7 +20,23 @@ bool Application::initialize(const std::string& config_dir) {
         return true;
     }
 
-    config_dir_ = config_dir;
+    if (!config_dir.empty()) {
+        std::filesystem::path input(config_dir);
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(input, ec)) {
+            config_dir_ = input.parent_path().string();
+        } else if (std::filesystem::is_directory(input, ec)) {
+            config_dir_ = input.string();
+        } else {
+            config_dir_ = input.parent_path().string();
+        }
+    } else {
+        config_dir_ = "config";
+    }
+
+    if (config_dir_.empty()) {
+        config_dir_ = ".";
+    }
 
     factories_ = va::buildFactories(engine_manager_);
     pipeline_builder_ = std::make_unique<va::core::PipelineBuilder>(factories_, engine_manager_);
@@ -26,9 +44,13 @@ bool Application::initialize(const std::string& config_dir) {
 
     detection_models_ = ConfigLoader::loadDetectionModels(config_dir_);
     detection_model_index_.clear();
+    active_models_by_task_.clear();
     for (const auto& model : detection_models_) {
         if (!model.id.empty()) {
             detection_model_index_.emplace(model.id, model);
+        }
+        if (!model.task.empty() && !model.id.empty() && !active_models_by_task_.count(model.task)) {
+            active_models_by_task_.emplace(model.task, model.id);
         }
     }
 
@@ -123,21 +145,71 @@ bool Application::ffmpegEnabled() const {
 #endif
 }
 
+bool Application::loadModel(const std::string& model_id) {
+    auto model_opt = findModelById(model_id);
+    if (!model_opt) {
+        return false;
+    }
+
+    active_models_by_task_[model_opt->task] = model_opt->id;
+
+    if (!track_manager_) {
+        return true;
+    }
+
+    bool success = true;
+    for (const auto& info : track_manager_->listPipelines()) {
+        if (info.task == model_opt->task) {
+            if (!track_manager_->switchModel(info.stream_id, info.profile_id, model_opt->id)) {
+                success = false;
+            }
+        }
+    }
+    return success;
+}
+
+bool Application::isModelActive(const std::string& model_id) const {
+    auto it = detection_model_index_.find(model_id);
+    if (it == detection_model_index_.end()) {
+        return false;
+    }
+    auto active_it = active_models_by_task_.find(it->second.task);
+    return active_it != active_models_by_task_.end() && active_it->second == model_id;
+}
+
 std::optional<std::string> Application::subscribeStream(const std::string& stream_id,
                                                         const std::string& profile_name,
-                                                        const std::string& source_uri) {
+                                                        const std::string& source_uri,
+                                                        const std::optional<std::string>& model_override) {
     if (!initialized_ || !track_manager_) {
         return std::nullopt;
     }
 
     auto profile_it = profile_index_.find(profile_name);
     if (profile_it == profile_index_.end()) {
+        std::cerr << "[Application] subscribeStream failed: profile not found " << profile_name << std::endl;
         return std::nullopt;
     }
 
-    auto model_opt = resolveModel(profile_it->second);
-    if (!model_opt) {
-        return std::nullopt;
+    std::optional<DetectionModelEntry> model_opt;
+    if (model_override && !model_override->empty()) {
+        model_opt = findModelById(*model_override);
+        if (!model_opt) {
+            std::cerr << "[Application] subscribeStream failed: model override not found " << *model_override << std::endl;
+            return std::nullopt;
+        }
+    } else {
+        auto active_it = active_models_by_task_.find(profile_it->second.task);
+        if (active_it != active_models_by_task_.end()) {
+            model_opt = findModelById(active_it->second);
+        }
+        if (!model_opt) {
+            model_opt = resolveModel(profile_it->second);
+        }
+        if (!model_opt) {
+            std::cerr << "[Application] subscribeStream failed: no model resolved for task " << profile_it->second.task << std::endl;
+            return std::nullopt;
+        }
     }
 
     auto params_opt = resolveParams(profile_it->second.task);
@@ -152,6 +224,8 @@ std::optional<std::string> Application::subscribeStream(const std::string& strea
 
     auto key = track_manager_->subscribe(source_cfg, filter_cfg, encoder_cfg, transport_cfg);
     if (key.empty()) {
+        std::cerr << "[Application] subscribeStream failed: pipeline builder returned empty key for stream "
+                  << stream_id << " profile " << profile_name << std::endl;
         return std::nullopt;
     }
     return key;
@@ -163,6 +237,14 @@ bool Application::unsubscribeStream(const std::string& stream_id, const std::str
     }
     track_manager_->unsubscribe(stream_id, profile_name);
     return true;
+}
+
+std::optional<DetectionModelEntry> Application::findModelById(const std::string& model_id) const {
+    auto it = detection_model_index_.find(model_id);
+    if (it != detection_model_index_.end()) {
+        return it->second;
+    }
+    return std::nullopt;
 }
 
 std::optional<DetectionModelEntry> Application::resolveModel(const ProfileEntry& profile) const {
