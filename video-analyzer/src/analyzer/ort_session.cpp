@@ -13,6 +13,21 @@
 #ifdef USE_ONNXRUNTIME
 #include <onnxruntime_c_api.h>
 #include <onnxruntime_cxx_api.h>
+#if defined(USE_CUDA)
+#if defined(__has_include)
+#if __has_include(<cuda_runtime.h>)
+#include <cuda_runtime.h>
+#define VA_HAS_CUDA_RUNTIME 1
+#else
+#define VA_HAS_CUDA_RUNTIME 0
+#endif
+#else
+#include <cuda_runtime.h>
+#define VA_HAS_CUDA_RUNTIME 1
+#endif
+#else
+#define VA_HAS_CUDA_RUNTIME 0
+#endif
 #endif
 
 namespace va::analyzer {
@@ -26,6 +41,42 @@ inline std::string toLower(std::string value) {
     });
     return value;
 }
+
+#if VA_HAS_CUDA_RUNTIME
+inline void releaseCudaBuffer(void*& pointer, size_t& capacity_bytes) {
+    if (pointer) {
+        cudaError_t err = cudaFree(pointer);
+        if (err != cudaSuccess) {
+            VA_LOG_WARN() << "cudaFree failed while releasing IoBinding buffer: " << cudaGetErrorString(err);
+        }
+        pointer = nullptr;
+    }
+    capacity_bytes = 0;
+}
+
+inline bool ensureCudaCapacity(void*& pointer, size_t& capacity_bytes, size_t required_bytes) {
+    if (required_bytes == 0) {
+        releaseCudaBuffer(pointer, capacity_bytes);
+        return true;
+    }
+    if (pointer && capacity_bytes >= required_bytes) {
+        return true;
+    }
+
+    releaseCudaBuffer(pointer, capacity_bytes);
+
+    cudaError_t err = cudaMalloc(&pointer, required_bytes);
+    if (err != cudaSuccess) {
+        VA_LOG_ERROR() << "cudaMalloc failed while allocating IoBinding buffer (" << required_bytes
+                       << " bytes): " << cudaGetErrorString(err);
+        pointer = nullptr;
+        capacity_bytes = 0;
+        return false;
+    }
+    capacity_bytes = required_bytes;
+    return true;
+}
+#endif
 } // namespace
 
 struct OrtModelSession::Impl {
@@ -41,10 +92,25 @@ struct OrtModelSession::Impl {
     std::vector<Ort::Value> last_outputs;
     bool use_gpu {false};
     std::mutex mutex;
+#if VA_HAS_CUDA_RUNTIME
+    void* io_input_device_buffer {nullptr};
+    size_t io_input_capacity_bytes {0};
+#endif
+    std::string resolved_provider {"cpu"};
+    bool io_binding_enabled {false};
+    bool device_binding_active {false};
+    bool cpu_fallback {false};
 };
 
 OrtModelSession::OrtModelSession() = default;
-OrtModelSession::~OrtModelSession() = default;
+OrtModelSession::~OrtModelSession() {
+#if VA_HAS_CUDA_RUNTIME
+    if (impl_) {
+        std::scoped_lock lock(impl_->mutex);
+        releaseCudaBuffer(impl_->io_input_device_buffer, impl_->io_input_capacity_bytes);
+    }
+#endif
+}
 
 void OrtModelSession::setOptions(const Options& options) {
     if (!impl_) {
@@ -74,17 +140,92 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
     }
 
     std::string provider = toLower(impl_->options.provider);
-    impl_->use_gpu = use_gpu || provider == "cuda" || provider == "gpu" || provider == "tensorrt";
+    if (provider == "ort-trt" || provider == "ort_tensor_rt" || provider == "ort-tensorrt") {
+        provider = "tensorrt";
+    } else if (provider == "ort-cuda" || provider == "ort-gpu") {
+        provider = "cuda";
+    } else if (provider == "ort-cpu") {
+        provider = "cpu";
+    }
+    bool gpu_requested = use_gpu || provider == "cuda" || provider == "gpu" || provider == "tensorrt";
+    impl_->use_gpu = gpu_requested;
 
     bool provider_appended = false;
     try {
-        if (provider == "tensorrt") {
 #if defined(USE_CUDA)
-            VA_LOG_WARN() << "TensorRT provider requested but TensorRT support is not wired in this build. Falling back to CUDA provider.";
-            provider = "cuda";
+        if (!provider_appended && provider == "tensorrt") {
+            const OrtApi& api = Ort::GetApi();
+            OrtTensorRTProviderOptionsV2* trt_options = nullptr;
+            try {
+                Ort::ThrowOnError(api.CreateTensorRTProviderOptions(&trt_options));
+
+                std::vector<std::string> option_storage;
+                std::vector<const char*> option_keys;
+                std::vector<const char*> option_values;
+
+                option_storage.emplace_back(std::to_string(impl_->options.device_id));
+                option_keys.emplace_back("device_id");
+                option_values.emplace_back(option_storage.back().c_str());
+
+                option_storage.emplace_back(impl_->options.tensorrt_fp16 ? "1" : "0");
+                option_keys.emplace_back("trt_fp16_enable");
+                option_values.emplace_back(option_storage.back().c_str());
+
+                option_storage.emplace_back(impl_->options.tensorrt_int8 ? "1" : "0");
+                option_keys.emplace_back("trt_int8_enable");
+                option_values.emplace_back(option_storage.back().c_str());
+
+                if (impl_->options.tensorrt_workspace_mb > 0) {
+                    size_t workspace_bytes = static_cast<size_t>(impl_->options.tensorrt_workspace_mb) * 1024ull * 1024ull;
+                    option_storage.emplace_back(std::to_string(workspace_bytes));
+                    option_keys.emplace_back("trt_max_workspace_size");
+                    option_values.emplace_back(option_storage.back().c_str());
+                }
+                if (impl_->options.tensorrt_max_partition_iterations > 0) {
+                    option_storage.emplace_back(std::to_string(impl_->options.tensorrt_max_partition_iterations));
+                    option_keys.emplace_back("trt_max_partition_iterations");
+                    option_values.emplace_back(option_storage.back().c_str());
+                }
+                if (impl_->options.tensorrt_min_subgraph_size > 0) {
+                    option_storage.emplace_back(std::to_string(impl_->options.tensorrt_min_subgraph_size));
+                    option_keys.emplace_back("trt_min_subgraph_size");
+                    option_values.emplace_back(option_storage.back().c_str());
+                }
+
+                if (!option_keys.empty()) {
+                    Ort::ThrowOnError(api.UpdateTensorRTProviderOptions(trt_options,
+                                                                        option_keys.data(),
+                                                                        option_values.data(),
+                                                                        option_keys.size()));
+                }
+
+                Ort::ThrowOnError(api.SessionOptionsAppendExecutionProvider_TensorRT_V2(*impl_->session_options, trt_options));
+                provider_appended = true;
+                impl_->use_gpu = true;
+                provider = "tensorrt";
+            } catch (const Ort::Exception& ex) {
+                VA_LOG_WARN() << "Failed to configure TensorRT provider: " << ex.what() << ". Falling back to CUDA.";
+                provider = "cuda";
+                provider_appended = false;
+            } catch (const std::exception& ex) {
+                VA_LOG_WARN() << "Failed to configure TensorRT provider: " << ex.what() << ". Falling back to CUDA.";
+                provider = "cuda";
+                provider_appended = false;
+            }
+
+            if (trt_options) {
+                api.ReleaseTensorRTProviderOptions(trt_options);
+            }
+        }
 #else
+        if (provider == "tensorrt") {
             VA_LOG_WARN() << "TensorRT provider requested but CUDA support is not compiled. Falling back to CPU.";
+            provider = "cpu";
+        }
 #endif
+
+        if (provider == "gpu") {
+            provider = "cuda";
         }
 
         if (!provider_appended && (impl_->use_gpu || provider == "cuda")) {
@@ -98,6 +239,7 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
             impl_->session_options->AppendExecutionProvider_CUDA(cuda_opts);
             provider_appended = true;
             impl_->use_gpu = true;
+            provider = "cuda";
 #else
             VA_LOG_WARN() << "CUDA provider requested but CUDA support is not compiled. Falling back to CPU.";
             impl_->use_gpu = false;
@@ -156,18 +298,42 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
         impl_->output_names.emplace_back(impl_->output_names_storage.back().c_str());
     }
 
+    impl_->resolved_provider = provider_appended ? provider : std::string{"cpu"};
+    impl_->cpu_fallback = gpu_requested && !provider_appended;
+
     if (impl_->options.use_io_binding && impl_->use_gpu) {
         try {
             impl_->io_binding = std::make_unique<Ort::IoBinding>(*impl_->session);
             VA_LOG_INFO() << "OrtModelSession IoBinding enabled (provider="
                           << (provider_appended ? provider : "cpu")
                           << ")";
+#if VA_HAS_CUDA_RUNTIME
+            if (impl_->options.io_binding_input_bytes > 0) {
+                ensureCudaCapacity(impl_->io_input_device_buffer,
+                                   impl_->io_input_capacity_bytes,
+                                   impl_->options.io_binding_input_bytes);
+            } else {
+                releaseCudaBuffer(impl_->io_input_device_buffer, impl_->io_input_capacity_bytes);
+            }
+#endif
+            impl_->io_binding_enabled = true;
+            impl_->device_binding_active = false;
         } catch (const std::exception& ex) {
             VA_LOG_WARN() << "Failed to initialize IoBinding: " << ex.what();
             impl_->io_binding.reset();
+#if VA_HAS_CUDA_RUNTIME
+            releaseCudaBuffer(impl_->io_input_device_buffer, impl_->io_input_capacity_bytes);
+#endif
+            impl_->io_binding_enabled = false;
+            impl_->device_binding_active = false;
         }
     } else {
         impl_->io_binding.reset();
+#if VA_HAS_CUDA_RUNTIME
+        releaseCudaBuffer(impl_->io_input_device_buffer, impl_->io_input_capacity_bytes);
+#endif
+        impl_->io_binding_enabled = false;
+        impl_->device_binding_active = false;
     }
 
     loaded_ = true;
@@ -219,17 +385,62 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
             std::vector<Ort::Value> input_holders;
             input_holders.reserve(1);
 
-            Ort::MemoryInfo input_mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-            if (impl_->options.use_io_binding && impl_->use_gpu && impl_->options.prefer_pinned_memory) {
-                input_mem = Ort::MemoryInfo("CudaPinned", OrtDeviceAllocator, impl_->options.device_id, OrtMemTypeCPU);
+            bool bound_device_input = false;
+#if VA_HAS_CUDA_RUNTIME
+            if (impl_->options.use_io_binding && impl_->use_gpu) {
+                size_t required_bytes = element_count * sizeof(float);
+                size_t target_bytes = std::max(required_bytes, impl_->options.io_binding_input_bytes);
+                if (target_bytes > 0 && !impl_->io_input_device_buffer) {
+                    ensureCudaCapacity(impl_->io_input_device_buffer,
+                                       impl_->io_input_capacity_bytes,
+                                       target_bytes);
+                } else if (target_bytes > 0 && impl_->io_input_capacity_bytes < target_bytes) {
+                    if (!ensureCudaCapacity(impl_->io_input_device_buffer,
+                                            impl_->io_input_capacity_bytes,
+                                            target_bytes)) {
+                        target_bytes = 0;
+                        required_bytes = 0;
+                    }
+                }
+
+                if (impl_->io_input_device_buffer && required_bytes > 0) {
+                    cudaError_t copy_err = cudaMemcpy(impl_->io_input_device_buffer,
+                                                      input.data,
+                                                      required_bytes,
+                                                      cudaMemcpyHostToDevice);
+                    if (copy_err != cudaSuccess) {
+                        VA_LOG_ERROR() << "cudaMemcpy host->device failed for IoBinding input: "
+                                       << cudaGetErrorString(copy_err);
+                        releaseCudaBuffer(impl_->io_input_device_buffer, impl_->io_input_capacity_bytes);
+                    } else {
+                        Ort::MemoryInfo input_mem = Ort::MemoryInfo("Cuda", OrtDeviceAllocator, impl_->options.device_id, OrtMemTypeDefault);
+                        input_holders.emplace_back(Ort::Value::CreateTensor<float>(
+                            input_mem,
+                            reinterpret_cast<float*>(impl_->io_input_device_buffer),
+                            element_count,
+                            const_cast<int64_t*>(input.shape.data()),
+                            input.shape.size()));
+                        bound_device_input = true;
+                    }
+                }
+            }
+#endif
+
+            if (!bound_device_input) {
+                Ort::MemoryInfo input_mem = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+                if (impl_->options.use_io_binding && impl_->use_gpu && impl_->options.prefer_pinned_memory) {
+                    input_mem = Ort::MemoryInfo("CudaPinned", OrtDeviceAllocator, impl_->options.device_id, OrtMemTypeCPU);
+                }
+
+                input_holders.emplace_back(Ort::Value::CreateTensor<float>(
+                    input_mem,
+                    static_cast<float*>(input.data),
+                    element_count,
+                    const_cast<int64_t*>(input.shape.data()),
+                    input.shape.size()));
             }
 
-            input_holders.emplace_back(Ort::Value::CreateTensor<float>(
-                input_mem,
-                static_cast<float*>(input.data),
-                element_count,
-                const_cast<int64_t*>(input.shape.data()),
-                input.shape.size()));
+            impl_->device_binding_active = bound_device_input;
 
             const char* input_name = impl_->input_names.empty() ? "input" : impl_->input_names.front();
             impl_->io_binding->BindInput(input_name, input_holders.front());
@@ -276,6 +487,9 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
                 outputs.emplace_back(makeTensorView(value, false));
             }
         }
+        if (!impl_->io_binding) {
+            impl_->device_binding_active = false;
+        }
     } catch (const Ort::Exception& ex) {
         VA_LOG_ERROR() << "OrtModelSession inference failed: " << ex.what();
         return false;
@@ -285,6 +499,20 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
     }
 
     return true;
+}
+
+OrtModelSession::RuntimeInfo OrtModelSession::runtimeInfo() const {
+    RuntimeInfo info;
+    if (!impl_) {
+        return info;
+    }
+    std::scoped_lock lock(impl_->mutex);
+    info.provider = impl_->resolved_provider;
+    info.gpu_active = impl_->use_gpu;
+    info.io_binding_active = impl_->io_binding_enabled && impl_->io_binding != nullptr;
+    info.device_binding_active = impl_->device_binding_active;
+    info.cpu_fallback = impl_->cpu_fallback;
+    return info;
 }
 
 #else // USE_ONNXRUNTIME

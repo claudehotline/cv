@@ -60,14 +60,17 @@ struct EngineOptions {
     bool allow_cpu_fallback {true};
     bool enable_profiling {false};
     bool tensorrt_fp16 {false};
-    bool tensorrt_int8 {false};
-    int tensorrt_workspace_mb {0};
+   bool tensorrt_int8 {false};
+   int tensorrt_workspace_mb {0};
+    int tensorrt_max_partition_iterations {0};
+    int tensorrt_min_subgraph_size {0};
     size_t io_binding_input_bytes {0};
     size_t io_binding_output_bytes {0};
 };
 
 struct AppEngineSpec {
     std::string type; // ort-cpu / ort-cuda / ort-trt
+    std::string provider;
     int device {0};
     EngineOptions options;
 };

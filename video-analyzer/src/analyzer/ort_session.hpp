@@ -22,6 +22,8 @@ public:
         bool tensorrt_fp16 {false};
         bool tensorrt_int8 {false};
         int tensorrt_workspace_mb {0};
+        int tensorrt_max_partition_iterations {0};
+        int tensorrt_min_subgraph_size {0};
         size_t io_binding_input_bytes {0};
         size_t io_binding_output_bytes {0};
     };
@@ -29,11 +31,21 @@ public:
     void setOptions(const Options& options);
 #endif
 
+    struct RuntimeInfo {
+        std::string provider {"cpu"};
+        bool gpu_active {false};
+        bool io_binding_active {false};
+        bool device_binding_active {false};
+        bool cpu_fallback {false};
+    };
+
     OrtModelSession();
     ~OrtModelSession() override;
 
     bool loadModel(const std::string& model_path, bool use_gpu) override;
     bool run(const core::TensorView& input, std::vector<core::TensorView>& outputs) override;
+
+    RuntimeInfo runtimeInfo() const;
 
 private:
     struct Impl;

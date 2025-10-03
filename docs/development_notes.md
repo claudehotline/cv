@@ -1,64 +1,77 @@
-# 开发说明
+# Development Notes
 
-本文档汇总视频分析后端在依赖管理、日志策略与回归检查方面的实践，方便团队成员快速对齐开发方式。
+This document gathers everyday guidance for the `video-analyzer` backend:
+dependencies, logging knobs, and helper scripts that keep regressions in check.
 
-## 构建与依赖
+## Runtime dependencies
 
-- **FFmpeg**：仓库不再携带官方二进制，请在本地准备与运行环境一致的共享库，并通过 `PATH` 或 `config/app.yaml` 中的 `defaults.encoder` 保证可被动态加载。`third_party/ffmpeg/` 仅保留获取脚本，不放置可执行文件。
-- **yaml-cpp**：优先使用仓库 `third_party/yaml-cpp` 下的源码构建；若切换到系统库，请同步更新 `video-analyzer/CMakeLists.txt` 内的 `YAML_LOCAL_ROOT` 配置。
-- **ONNX Runtime / TensorRT**：自编译的 GPU 版建议放置在 `D:\Projects\ai\cv\build\onnxruntime\build\Windows\Release\Release`，并设置 `ONNXRUNTIME_ROOT` 及 TensorRT `lib` 目录到系统 `PATH`。需要 CUDA 12.9 及匹配的 NVIDIA 驱动。
+- **FFmpeg** – Only helper scripts live under
+  `third_party/ffmpeg-prebuilt`. Ensure the FFmpeg runtime DLLs (e.g.
+  `avcodec-62.dll`, `avformat-62.dll`) are on `PATH` or co-located with
+  `VideoAnalyzer.exe`.
+- **yaml-cpp** – CMake prefers the local checkout at
+  `third_party/yaml-cpp/yaml-cpp-0.8.0`. Switch to the system package by setting
+  `YAML_LOCAL_ROOT` accordingly.
+- **ONNX Runtime + TensorRT** – GPU builds rely on the custom ORT 1.23.0 output
+  in `build/onnxruntime/build/Windows/Release/Release` and TensorRT 10.x (`lib`
+  folder on `PATH`). Tested against CUDA 12.9 drivers.
 
-## 日志与观测配置
+### Engine configuration snippets
 
-`config/app.yaml` 的 `observability` 段用于统一日志输出与指标采样：
+```yaml
+engine:
+  type: ort-trt        # ort-cpu | ort-cuda | ort-trt
+  device: 0
+  options:
+    trt_fp16: true
+    trt_int8: false
+    trt_workspace_mb: 4096
+    trt_max_partition_iterations: 100
+    trt_min_subgraph_size: 1
+    use_io_binding: true
+    prefer_pinned_memory: true
+```
+
+Leave the TensorRT keys unset (or zero) when running pure CUDA/CPU.
+
+## Logging & observability
+
+The logging policy lives in `config/app.yaml`:
 
 ```yaml
 observability:
-  log_level: info        # trace/debug/info/warn/error
-  console: true          # 是否输出到控制台
+  log_level: info
+  console: true
   file:
     path: logs/video-analyzer.log
-    max_size_kb: 10240   # 单文件最大 10MB
-    max_files: 5         # 轮转文件数
+    max_size_kb: 10240
+    max_files: 5
   pipeline_metrics:
     enabled: true
-    interval_ms: 5000    # 聚合指标刷新周期
+    interval_ms: 5000
 ```
 
-后端代码已经切换为 `VA_LOG_*` 宏；即使未启用文件输出，也会统一走 Logger 管线，便于部署时快速接入。
+All console output is redirected through the `VA_LOG_*` helpers, so flipping
+`console` to `false` silences the binary without code changes.
 
-## 检测日志分析
+## Regression helpers
 
-运行时可通过 `VideoAnalyzer.exe` 的标准输出收集检测统计（示例 `va-output.log`）。为了快速定位误报/漏报，可使用 `scripts/analyze_detection_log.py`：
+- `python scripts/check_analysis_api.py --base http://127.0.0.1:8082`
+  – Smoke test the REST surface (`/api/system/info`, `/api/models`, …).
+- `python scripts/check_subscription_flow.py --base http://127.0.0.1:8082 --url rtsp://127.0.0.1:8554/camera_01`
+  – Creates/destroys a pipeline and verifies `/api/pipelines` updates.
+- `python scripts/check_gpu_inference.py --base http://127.0.0.1:8082`
+  – Validates the new `engine_runtime` block (`provider`, `gpu_active`, etc.).
+    - `--expect-provider tensorrt` 可断言实际执行 EP。
+    - `--url ... --require-gpu` 会进行一次订阅以确认 GPU/IoBinding 生效。
+- `python scripts/analyze_detection_log.py --log logs/video-analyzer.log`
+  – Parses the main log for per-stream FPS/latency anomalies.
 
-```powershell
-python scripts/analyze_detection_log.py --log va-output.log --source-prefix camera_
-```
+## Reference docs
 
-脚本会统计每路流的帧数、平均检测框数量、0 检测占比及高于阈值的帧比例，可以配合 `--threshold 15`、`--top 10` 等参数聚焦异常时段。
+- `docs/model_configuration.md` – Model/profile schema.
+- `docs/api_endpoints.md` – Supported REST endpoints and response schema.
+- `docs/深度重构计划.txt` – Stage-by-stage refactor plan (Chinese).
 
-## REST API 回归检查
-
-`scripts/check_analysis_api.py` 用于快速验证后端 REST 接口是否返回成功响应（需要先启动 `VideoAnalyzer.exe`）：
-
-```powershell
-python scripts/check_analysis_api.py --base http://127.0.0.1:8082
-```
-
-脚本会访问 `/api/system/info`、`/api/system/stats`、`/api/models`、`/api/profiles`、`/api/pipelines` 等端点，确保状态码为 200 且返回 `{ "success": true, ... }`。如需自定义地址或超时时间，可使用 `--base`、`--timeout` 参数。
-
-对于关键的订阅流程，可执行：
-
-```powershell
-python scripts/check_subscription_flow.py --base http://127.0.0.1:8082 --url rtsp://127.0.0.1:8554/camera_01
-```
-
-该脚本会自动挑选 profile，依次完成 `/api/subscribe`、`/api/pipelines` 校验与 `/api/unsubscribe`，验证新增管线和清理是否生效。若实际环境使用不同的 RTSP/模型参数，可通过 `--profile`、`--model`、`--url` 自行指定。
-
-## 参考资料
-
-- `docs/model_configuration.md`：模型与 Profile 配置说明。
-- `docs/api_endpoints.md`：REST API 文档（旧的 `/api/analysis/*` 已废弃）。
-- `深度重构计划.txt`：阶段性重构目标与 TODO 列表。
-
-如需扩展功能或调整流程，请同步更新本文档，保持依赖与观测策略一致。
+Update this note whenever we add new tooling or change the recommended
+debugging workflow. Keep it short and actionable.

@@ -73,7 +73,19 @@ bool Application::initialize(const std::string& config_dir) {
 
     va::core::EngineDescriptor descriptor;
     descriptor.name = app_config_.engine.type;
-    descriptor.provider = app_config_.engine.type;
+    std::string raw_provider = app_config_.engine.provider.empty() ? app_config_.engine.type : app_config_.engine.provider;
+    std::string provider_lower = raw_provider;
+    std::transform(provider_lower.begin(), provider_lower.end(), provider_lower.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    if (provider_lower == "ort-trt" || provider_lower == "ort_tensor_rt" || provider_lower == "ort-tensorrt") {
+        raw_provider = "tensorrt";
+    } else if (provider_lower == "ort-cuda" || provider_lower == "ort-gpu") {
+        raw_provider = "cuda";
+    } else if (provider_lower == "ort-cpu") {
+        raw_provider = "cpu";
+    }
+    descriptor.provider = raw_provider;
     descriptor.device_index = app_config_.engine.device;
     descriptor.options["use_io_binding"] = app_config_.engine.options.use_io_binding ? "true" : "false";
     descriptor.options["prefer_pinned_memory"] = app_config_.engine.options.prefer_pinned_memory ? "true" : "false";
@@ -83,6 +95,12 @@ bool Application::initialize(const std::string& config_dir) {
     descriptor.options["trt_int8"] = app_config_.engine.options.tensorrt_int8 ? "true" : "false";
     if (app_config_.engine.options.tensorrt_workspace_mb > 0) {
         descriptor.options["trt_workspace_mb"] = std::to_string(app_config_.engine.options.tensorrt_workspace_mb);
+    }
+    if (app_config_.engine.options.tensorrt_max_partition_iterations > 0) {
+        descriptor.options["trt_max_partition_iterations"] = std::to_string(app_config_.engine.options.tensorrt_max_partition_iterations);
+    }
+    if (app_config_.engine.options.tensorrt_min_subgraph_size > 0) {
+        descriptor.options["trt_min_subgraph_size"] = std::to_string(app_config_.engine.options.tensorrt_min_subgraph_size);
     }
     if (app_config_.engine.options.io_binding_input_bytes > 0) {
         descriptor.options["io_binding_input_bytes"] = std::to_string(app_config_.engine.options.io_binding_input_bytes);
@@ -364,6 +382,10 @@ bool Application::setEngine(const va::core::EngineDescriptor& descriptor) {
     return true;
 }
 
+va::core::EngineRuntimeStatus Application::engineRuntimeStatus() const {
+    return engine_manager_.currentRuntimeStatus();
+}
+
 std::optional<DetectionModelEntry> Application::findModelById(const std::string& model_id) const {
     auto it = detection_model_index_.find(model_id);
     if (it != detection_model_index_.end()) {
@@ -495,6 +517,8 @@ va::core::FilterConfig Application::buildFilterConfig(const std::string& stream_
     cfg.tensorrt_fp16 = getBoolOption("trt_fp16", cfg.tensorrt_fp16);
     cfg.tensorrt_int8 = getBoolOption("trt_int8", cfg.tensorrt_int8);
     cfg.tensorrt_workspace_mb = getIntOption("trt_workspace_mb", cfg.tensorrt_workspace_mb);
+    cfg.tensorrt_max_partition_iterations = getIntOption("trt_max_partition_iterations", cfg.tensorrt_max_partition_iterations);
+    cfg.tensorrt_min_subgraph_size = getIntOption("trt_min_subgraph_size", cfg.tensorrt_min_subgraph_size);
     cfg.io_binding_input_bytes = getSizeOption("io_binding_input_bytes", cfg.io_binding_input_bytes);
     cfg.io_binding_output_bytes = getSizeOption("io_binding_output_bytes", cfg.io_binding_output_bytes);
 

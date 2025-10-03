@@ -186,6 +186,7 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
     if (engine_node && engine_node.IsMap()) {
         const auto& eng = engine_node;
         payload.engine.type = eng["type"].as<std::string>("ort-cpu");
+        payload.engine.provider = eng["provider"].as<std::string>(payload.engine.type);
         payload.engine.device = eng["device"].as<int>(0);
 
         const auto options_node = eng["options"];
@@ -199,6 +200,10 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
             opts.tensorrt_int8 = options_node["trt_int8"].as<bool>(opts.tensorrt_int8);
             opts.tensorrt_workspace_mb = options_node["trt_workspace_mb"].as<int>(
                 options_node["trt_workspace"].as<int>(opts.tensorrt_workspace_mb));
+            opts.tensorrt_max_partition_iterations = options_node["trt_max_partition_iterations"].as<int>(
+                opts.tensorrt_max_partition_iterations);
+            opts.tensorrt_min_subgraph_size = options_node["trt_min_subgraph_size"].as<int>(
+                opts.tensorrt_min_subgraph_size);
             opts.io_binding_input_bytes = parseByteOption(options_node, "io_binding_input_bytes", "io_binding_input_mb", opts.io_binding_input_bytes);
             opts.io_binding_output_bytes = parseByteOption(options_node, "io_binding_output_bytes", "io_binding_output_mb", opts.io_binding_output_bytes);
         }

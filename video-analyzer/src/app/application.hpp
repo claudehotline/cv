@@ -72,6 +72,8 @@ public:
     bool setEngine(const va::core::EngineDescriptor& descriptor);
     const std::string& lastError() const { return last_error_; }
 
+    va::core::EngineRuntimeStatus engineRuntimeStatus() const;
+
 private:
     std::string config_dir_;
     va::core::EngineManager engine_manager_;

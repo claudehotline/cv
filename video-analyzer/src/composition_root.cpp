@@ -57,6 +57,8 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         options.tensorrt_fp16 = cfg.tensorrt_fp16;
         options.tensorrt_int8 = cfg.tensorrt_int8;
         options.tensorrt_workspace_mb = cfg.tensorrt_workspace_mb;
+        options.tensorrt_max_partition_iterations = cfg.tensorrt_max_partition_iterations;
+        options.tensorrt_min_subgraph_size = cfg.tensorrt_min_subgraph_size;
         options.io_binding_input_bytes = cfg.io_binding_input_bytes;
         options.io_binding_output_bytes = cfg.io_binding_output_bytes;
         session->setOptions(options);
@@ -75,6 +77,18 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
                            << " (gpu=" << std::boolalpha << use_gpu << std::noboolalpha << ")";
             return std::shared_ptr<va::analyzer::Analyzer>{};
         }
+
+        {
+            auto runtime = session->runtimeInfo();
+            va::core::EngineRuntimeStatus status;
+            status.provider = runtime.provider;
+            status.gpu_active = runtime.gpu_active;
+            status.io_binding = runtime.io_binding_active;
+            status.device_binding = runtime.device_binding_active;
+            status.cpu_fallback = runtime.cpu_fallback;
+            engine_manager.updateRuntimeStatus(std::move(status));
+        }
+
         analyzer->setSession(session);
         analyzer->setUseGpuHint(use_gpu);
 
