@@ -15,8 +15,7 @@ bool SwitchableRtspSource::start() {
         return true;
     }
     if (!openCapture()) {
-        VA_LOG_ERROR() << "[RTSP] failed to open initial capture for URI " << uri_;
-        return false;
+        VA_LOG_WARN() << "[RTSP] initial capture open failed for URI " << uri_ << ", will retry lazily";
     }
     running_ = true;
     frame_counter_ = 0;

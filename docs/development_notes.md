@@ -61,9 +61,12 @@ All console output is redirected through the `VA_LOG_*` helpers, so flipping
 - `python scripts/check_subscription_flow.py --base http://127.0.0.1:8082 --url rtsp://127.0.0.1:8554/camera_01`
   – Creates/destroys a pipeline and verifies `/api/pipelines` updates.
 - `python scripts/check_gpu_inference.py --base http://127.0.0.1:8082`
-  – Validates the new `engine_runtime` block (`provider`, `gpu_active`, etc.).
-    - `--expect-provider tensorrt` 可断言实际执行 EP。
-    - `--url ... --require-gpu` 会进行一次订阅以确认 GPU/IoBinding 生效。
+  – Validates the `engine_runtime` block (`provider`, `gpu_active`, `io_binding`,
+    `device_binding`, `cpu_fallback`).
+    - `--expect-provider tensorrt` 断言当前执行 EP；默认输出 `cuda` 或
+      `tensorrt`。
+    - `--url ... --require-gpu --require-device-binding` 会执行短暂订阅，确认
+      GPU IoBinding/设备缓冲状态在运行中被刷新。
 - `python scripts/analyze_detection_log.py --log logs/video-analyzer.log`
   – Parses the main log for per-stream FPS/latency anomalies.
 

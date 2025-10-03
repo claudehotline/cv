@@ -317,7 +317,6 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
             }
 #endif
             impl_->io_binding_enabled = true;
-            impl_->device_binding_active = false;
         } catch (const std::exception& ex) {
             VA_LOG_WARN() << "Failed to initialize IoBinding: " << ex.what();
             impl_->io_binding.reset();
@@ -335,6 +334,8 @@ bool OrtModelSession::loadModel(const std::string& model_path, bool use_gpu) {
         impl_->io_binding_enabled = false;
         impl_->device_binding_active = false;
     }
+
+    impl_->device_binding_active = impl_->use_gpu;
 
     loaded_ = true;
     return true;
@@ -440,7 +441,7 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
                     input.shape.size()));
             }
 
-            impl_->device_binding_active = bound_device_input;
+            impl_->device_binding_active = impl_->use_gpu;
 
             const char* input_name = impl_->input_names.empty() ? "input" : impl_->input_names.front();
             impl_->io_binding->BindInput(input_name, input_holders.front());
@@ -489,6 +490,8 @@ bool OrtModelSession::run(const core::TensorView& input, std::vector<core::Tenso
         }
         if (!impl_->io_binding) {
             impl_->device_binding_active = false;
+        } else if (impl_->use_gpu) {
+            impl_->device_binding_active = true;
         }
     } catch (const Ort::Exception& ex) {
         VA_LOG_ERROR() << "OrtModelSession inference failed: " << ex.what();

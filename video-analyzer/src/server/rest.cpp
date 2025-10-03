@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cctype>
 #include <cstddef>
+#include <initializer_list>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -77,6 +78,92 @@ std::string toLower(std::string value) {
         return static_cast<char>(std::tolower(c));
     });
     return value;
+}
+
+std::optional<std::string> getStringField(const Json::Value& node, std::initializer_list<const char*> keys) {
+    for (const auto* key : keys) {
+        if (node.isMember(key) && node[key].isString()) {
+            return node[key].asString();
+        }
+    }
+    return std::nullopt;
+}
+
+Json::Value modelToJson(const DetectionModelEntry& model) {
+    Json::Value node(Json::objectValue);
+    node["id"] = model.id;
+    node["task"] = model.task;
+    node["family"] = model.family;
+    node["variant"] = model.variant;
+    node["type"] = model.type;
+    node["path"] = model.path;
+    node["input_width"] = model.input_width;
+    node["input_height"] = model.input_height;
+    node["confidence_threshold"] = model.conf;
+    node["iou_threshold"] = model.iou;
+    return node;
+}
+
+Json::Value encoderConfigToJson(const va::core::EncoderConfig& cfg) {
+    Json::Value node(Json::objectValue);
+    node["width"] = cfg.width;
+    node["height"] = cfg.height;
+    node["fps"] = cfg.fps;
+    node["bitrate_kbps"] = cfg.bitrate_kbps;
+    node["gop"] = cfg.gop;
+    node["bframes"] = cfg.bframes;
+    node["zero_latency"] = cfg.zero_latency;
+    node["preset"] = cfg.preset;
+    node["tune"] = cfg.tune;
+    node["profile"] = cfg.profile;
+    node["codec"] = cfg.codec;
+    return node;
+}
+
+Json::Value profileToJson(const ProfileEntry& profile) {
+    Json::Value node(Json::objectValue);
+    node["name"] = profile.name;
+    node["task"] = profile.task;
+    node["model_id"] = profile.model_id;
+    node["model_family"] = profile.model_family;
+    node["model_variant"] = profile.model_variant;
+    node["model_path"] = profile.model_path;
+    node["input_width"] = profile.input_width;
+    node["input_height"] = profile.input_height;
+    va::core::EncoderConfig enc_cfg;
+    enc_cfg.width = profile.enc_width;
+    enc_cfg.height = profile.enc_height;
+    enc_cfg.fps = profile.enc_fps;
+    enc_cfg.bitrate_kbps = profile.enc_bitrate_kbps;
+    enc_cfg.gop = profile.enc_gop;
+    enc_cfg.zero_latency = profile.enc_zero_latency;
+    enc_cfg.bframes = profile.enc_bframes;
+    enc_cfg.preset = profile.enc_preset;
+    enc_cfg.tune = profile.enc_tune;
+    enc_cfg.profile = profile.enc_profile;
+    enc_cfg.codec = profile.enc_codec;
+    node["encoder"] = encoderConfigToJson(enc_cfg);
+    node["publish_whip_template"] = profile.publish_whip_template;
+    node["publish_whep_template"] = profile.publish_whep_template;
+    return node;
+}
+
+Json::Value metricsToJson(const va::core::Pipeline::Metrics& metrics) {
+    Json::Value node(Json::objectValue);
+    node["fps"] = metrics.fps;
+    node["avg_latency_ms"] = metrics.avg_latency_ms;
+    node["last_processed_ms"] = metrics.last_processed_ms;
+    node["processed_frames"] = static_cast<Json::UInt64>(metrics.processed_frames);
+    node["dropped_frames"] = static_cast<Json::UInt64>(metrics.dropped_frames);
+    return node;
+}
+
+Json::Value transportStatsToJson(const va::media::ITransport::Stats& stats) {
+    Json::Value node(Json::objectValue);
+    node["connected"] = stats.connected;
+    node["packets"] = static_cast<Json::UInt64>(stats.packets);
+    node["bytes"] = static_cast<Json::UInt64>(stats.bytes);
+    return node;
 }
 
 class SimpleHttpServer {
@@ -292,6 +379,38 @@ private:
             return;
         }
 
+        size_t content_length = 0;
+        bool has_content_length = false;
+        for (const auto& entry : request.headers) {
+            std::string header_name = toLower(entry.first);
+            if (header_name == "content-length") {
+                try {
+                    content_length = static_cast<size_t>(std::stoll(entry.second));
+                    has_content_length = true;
+                } catch (...) {
+                    content_length = 0;
+                }
+                break;
+            }
+        }
+
+        if (has_content_length && request.body.size() < content_length) {
+            size_t remaining = content_length - request.body.size();
+            while (remaining > 0) {
+                const size_t chunk_size = (std::min)(remaining, static_cast<size_t>(buffer_size));
+#ifdef _WIN32
+                int read_bytes = recv(client_socket, buffer, static_cast<int>(chunk_size), 0);
+#else
+                int read_bytes = static_cast<int>(recv(client_socket, buffer, chunk_size, 0));
+#endif
+                if (read_bytes <= 0) {
+                    break;
+                }
+                request.body.append(buffer, static_cast<size_t>(read_bytes));
+                remaining -= static_cast<size_t>(read_bytes);
+            }
+        }
+
         HttpResponse response;
         bool matched = false;
         {
@@ -488,13 +607,55 @@ struct RestServer::Impl {
     }
 
     void registerRoutes() {
-        server.addRoute("POST", "/subscribe", [this](const HttpRequest& req) { return handleSubscribe(req); });
-        server.addRoute("POST", "/unsubscribe", [this](const HttpRequest& req) { return handleUnsubscribe(req); });
-        server.addRoute("POST", "/source/switch", [this](const HttpRequest& req) { return handleSourceSwitch(req); });
-        server.addRoute("POST", "/model/switch", [this](const HttpRequest& req) { return handleModelSwitch(req); });
-        server.addRoute("POST", "/task/switch", [this](const HttpRequest& req) { return handleTaskSwitch(req); });
-        server.addRoute("PATCH", "/model/params", [this](const HttpRequest& req) { return handleParamsUpdate(req); });
-        server.addRoute("POST", "/engine/set", [this](const HttpRequest& req) { return handleSetEngine(req); });
+        auto subscribeHandler = [this](const HttpRequest& req) { return handleSubscribe(req); };
+        auto unsubscribeHandler = [this](const HttpRequest& req) { return handleUnsubscribe(req); };
+        auto sourceSwitchHandler = [this](const HttpRequest& req) { return handleSourceSwitch(req); };
+        auto modelSwitchHandler = [this](const HttpRequest& req) { return handleModelSwitch(req); };
+        auto taskSwitchHandler = [this](const HttpRequest& req) { return handleTaskSwitch(req); };
+        auto paramsUpdateHandler = [this](const HttpRequest& req) { return handleParamsUpdate(req); };
+        auto setEngineHandler = [this](const HttpRequest& req) { return handleSetEngine(req); };
+
+        server.addRoute("POST", "/subscribe", subscribeHandler);
+        server.addRoute("POST", "/api/subscribe", subscribeHandler);
+
+        server.addRoute("POST", "/unsubscribe", unsubscribeHandler);
+        server.addRoute("POST", "/api/unsubscribe", unsubscribeHandler);
+
+        server.addRoute("POST", "/source/switch", sourceSwitchHandler);
+        server.addRoute("POST", "/api/source/switch", sourceSwitchHandler);
+
+        server.addRoute("POST", "/model/switch", modelSwitchHandler);
+        server.addRoute("POST", "/api/model/switch", modelSwitchHandler);
+
+        server.addRoute("POST", "/task/switch", taskSwitchHandler);
+        server.addRoute("POST", "/api/task/switch", taskSwitchHandler);
+
+        server.addRoute("PATCH", "/model/params", paramsUpdateHandler);
+        server.addRoute("PATCH", "/api/model/params", paramsUpdateHandler);
+
+        server.addRoute("POST", "/engine/set", setEngineHandler);
+        server.addRoute("POST", "/api/engine/set", setEngineHandler);
+
+        auto systemInfoHandler = [this](const HttpRequest& req) { return handleSystemInfo(req); };
+        auto systemStatsHandler = [this](const HttpRequest& req) { return handleSystemStats(req); };
+        auto modelsHandler = [this](const HttpRequest& req) { return handleModels(req); };
+        auto profilesHandler = [this](const HttpRequest& req) { return handleProfiles(req); };
+        auto pipelinesHandler = [this](const HttpRequest& req) { return handlePipelines(req); };
+
+        server.addRoute("GET", "/system/info", systemInfoHandler);
+        server.addRoute("GET", "/api/system/info", systemInfoHandler);
+
+        server.addRoute("GET", "/system/stats", systemStatsHandler);
+        server.addRoute("GET", "/api/system/stats", systemStatsHandler);
+
+        server.addRoute("GET", "/models", modelsHandler);
+        server.addRoute("GET", "/api/models", modelsHandler);
+
+        server.addRoute("GET", "/profiles", profilesHandler);
+        server.addRoute("GET", "/api/profiles", profilesHandler);
+
+        server.addRoute("GET", "/pipelines", pipelinesHandler);
+        server.addRoute("GET", "/api/pipelines", pipelinesHandler);
     }
 
     bool start() {
@@ -505,19 +666,143 @@ struct RestServer::Impl {
         server.stop();
     }
 
+    HttpResponse handleSystemInfo(const HttpRequest& /*req*/) {
+        Json::Value payload = successPayload();
+        Json::Value data(Json::objectValue);
+
+        const auto& config = app.appConfig();
+        Json::Value engine(Json::objectValue);
+        engine["type"] = config.engine.type;
+        engine["device"] = config.engine.device;
+
+        Json::Value engine_options(Json::objectValue);
+        engine_options["use_io_binding"] = config.engine.options.use_io_binding;
+        engine_options["prefer_pinned_memory"] = config.engine.options.prefer_pinned_memory;
+        engine_options["allow_cpu_fallback"] = config.engine.options.allow_cpu_fallback;
+        engine_options["enable_profiling"] = config.engine.options.enable_profiling;
+        engine_options["tensorrt_fp16"] = config.engine.options.tensorrt_fp16;
+        engine_options["tensorrt_int8"] = config.engine.options.tensorrt_int8;
+        engine_options["tensorrt_workspace_mb"] = config.engine.options.tensorrt_workspace_mb;
+        engine_options["io_binding_input_bytes"] = static_cast<Json::UInt64>(config.engine.options.io_binding_input_bytes);
+        engine_options["io_binding_output_bytes"] = static_cast<Json::UInt64>(config.engine.options.io_binding_output_bytes);
+        engine["options"] = engine_options;
+        data["engine"] = engine;
+
+        Json::Value observability(Json::objectValue);
+        observability["log_level"] = config.observability.log_level;
+        observability["console"] = config.observability.console;
+        observability["file_path"] = config.observability.file_path;
+        observability["file_max_size_kb"] = config.observability.file_max_size_kb;
+        observability["file_max_files"] = config.observability.file_max_files;
+        observability["pipeline_metrics_enabled"] = config.observability.pipeline_metrics_enabled;
+        observability["pipeline_metrics_interval_ms"] = config.observability.pipeline_metrics_interval_ms;
+        data["observability"] = observability;
+
+        Json::Value sfu(Json::objectValue);
+        sfu["whip_base"] = config.sfu_whip_base;
+        sfu["whep_base"] = config.sfu_whep_base;
+        data["sfu"] = sfu;
+
+        data["ffmpeg_enabled"] = app.ffmpegEnabled();
+        data["model_count"] = static_cast<Json::UInt64>(app.detectionModels().size());
+        data["profile_count"] = static_cast<Json::UInt64>(app.profiles().size());
+
+        const auto runtime_status = app.engineRuntimeStatus();
+        Json::Value runtime(Json::objectValue);
+        runtime["provider"] = runtime_status.provider;
+        runtime["gpu_active"] = runtime_status.gpu_active;
+        runtime["io_binding"] = runtime_status.io_binding;
+        runtime["device_binding"] = runtime_status.device_binding;
+        runtime["cpu_fallback"] = runtime_status.cpu_fallback;
+        data["engine_runtime"] = runtime;
+
+        payload["data"] = data;
+        return jsonResponse(payload, 200);
+    }
+
+    HttpResponse handleSystemStats(const HttpRequest& /*req*/) {
+        Json::Value payload = successPayload();
+        Json::Value data(Json::objectValue);
+        const auto stats = app.systemStats();
+        data["total_pipelines"] = static_cast<Json::UInt64>(stats.total_pipelines);
+        data["running_pipelines"] = static_cast<Json::UInt64>(stats.running_pipelines);
+        data["aggregate_fps"] = stats.aggregate_fps;
+        data["processed_frames"] = static_cast<Json::UInt64>(stats.processed_frames);
+        data["dropped_frames"] = static_cast<Json::UInt64>(stats.dropped_frames);
+        data["transport_packets"] = static_cast<Json::UInt64>(stats.transport_packets);
+        data["transport_bytes"] = static_cast<Json::UInt64>(stats.transport_bytes);
+        payload["data"] = data;
+        return jsonResponse(payload, 200);
+    }
+
+    HttpResponse handleModels(const HttpRequest& /*req*/) {
+        Json::Value payload = successPayload();
+        Json::Value data(Json::arrayValue);
+        for (const auto& model : app.detectionModels()) {
+            data.append(modelToJson(model));
+        }
+        payload["data"] = data;
+        return jsonResponse(payload, 200);
+    }
+
+    HttpResponse handleProfiles(const HttpRequest& /*req*/) {
+        Json::Value payload = successPayload();
+        Json::Value data(Json::arrayValue);
+        for (const auto& profile : app.profiles()) {
+            data.append(profileToJson(profile));
+        }
+        payload["data"] = data;
+        return jsonResponse(payload, 200);
+    }
+
+    HttpResponse handlePipelines(const HttpRequest& /*req*/) {
+        Json::Value payload = successPayload();
+        Json::Value data(Json::arrayValue);
+        for (const auto& info : app.pipelines()) {
+            Json::Value node(Json::objectValue);
+            node["key"] = info.key;
+            node["stream_id"] = info.stream_id;
+            node["profile_id"] = info.profile_id;
+            node["source_uri"] = info.source_uri;
+            node["model_id"] = info.model_id;
+            node["task"] = info.task;
+            node["running"] = info.running;
+            node["last_active_ms"] = info.last_active_ms;
+            node["track_id"] = info.track_id;
+            node["metrics"] = metricsToJson(info.metrics);
+            node["transport_stats"] = transportStatsToJson(info.transport_stats);
+            node["encoder"] = encoderConfigToJson(info.encoder_cfg);
+            data.append(std::move(node));
+        }
+        payload["data"] = data;
+        return jsonResponse(payload, 200);
+    }
+
     HttpResponse handleSubscribe(const HttpRequest& req) {
         try {
             const Json::Value body = parseJson(req.body);
-            const auto required = {"stream_id", "profile", "source_uri"};
-            for (const auto* key : required) {
-                if (!body.isMember(key) || !body[key].isString()) {
-                    return errorResponse(std::string("Missing required field: ") + key, 400);
-                }
+
+            auto stream_opt = getStringField(body, {"stream_id", "stream"});
+            if (!stream_opt) {
+                VA_LOG_WARN() << "[REST] subscribe missing stream identifier: body=" << body.toStyledString();
+                return errorResponse("Missing required field: stream_id", 400);
             }
 
-            const std::string stream_id = body["stream_id"].asString();
-            const std::string profile = body["profile"].asString();
-            const std::string uri = body["source_uri"].asString();
+            auto profile_opt = getStringField(body, {"profile", "profile_id"});
+            if (!profile_opt) {
+                VA_LOG_WARN() << "[REST] subscribe missing profile: body=" << body.toStyledString();
+                return errorResponse("Missing required field: profile", 400);
+            }
+
+            auto uri_opt = getStringField(body, {"source_uri", "url"});
+            if (!uri_opt) {
+                VA_LOG_WARN() << "[REST] subscribe missing source URI: body=" << body.toStyledString();
+                return errorResponse("Missing required field: source_uri", 400);
+            }
+
+            const std::string stream_id = *stream_opt;
+            const std::string profile = *profile_opt;
+            const std::string uri = *uri_opt;
             std::optional<std::string> model_override;
             if (body.isMember("model_id") && body["model_id"].isString()) {
                 model_override = body["model_id"].asString();
@@ -529,7 +814,15 @@ struct RestServer::Impl {
             }
 
             Json::Value payload = successPayload();
-            payload["subscription_id"] = *result;
+            Json::Value data(Json::objectValue);
+            data["subscription_id"] = *result;
+            data["pipeline_key"] = *result;
+            data["stream_id"] = stream_id;
+            data["profile"] = profile;
+            if (model_override) {
+                data["model_id"] = *model_override;
+            }
+            payload["data"] = data;
             return jsonResponse(payload, 201);
         } catch (const std::exception& ex) {
             return errorResponse(ex.what(), 400);
@@ -539,14 +832,18 @@ struct RestServer::Impl {
     HttpResponse handleUnsubscribe(const HttpRequest& req) {
         try {
             const Json::Value body = parseJson(req.body);
-            const auto required = {"stream_id", "profile"};
-            for (const auto* key : required) {
-                if (!body.isMember(key) || !body[key].isString()) {
-                    return errorResponse(std::string("Missing required field: ") + key, 400);
-                }
+
+            auto stream_opt = getStringField(body, {"stream_id", "stream"});
+            if (!stream_opt) {
+                return errorResponse("Missing required field: stream_id", 400);
             }
 
-            const bool success = app.unsubscribeStream(body["stream_id"].asString(), body["profile"].asString());
+            auto profile_opt = getStringField(body, {"profile", "profile_id"});
+            if (!profile_opt) {
+                return errorResponse("Missing required field: profile", 400);
+            }
+
+            const bool success = app.unsubscribeStream(*stream_opt, *profile_opt);
             if (!success) {
                 return errorResponse(app.lastError().empty() ? "unsubscribe failed" : app.lastError(), 400);
             }
@@ -561,14 +858,23 @@ struct RestServer::Impl {
     HttpResponse handleSourceSwitch(const HttpRequest& req) {
         try {
             const Json::Value body = parseJson(req.body);
-            const auto required = {"stream_id", "profile", "source_uri"};
-            for (const auto* key : required) {
-                if (!body.isMember(key) || !body[key].isString()) {
-                    return errorResponse(std::string("Missing required field: ") + key, 400);
-                }
+
+            auto stream_opt = getStringField(body, {"stream_id", "stream"});
+            if (!stream_opt) {
+                return errorResponse("Missing required field: stream_id", 400);
             }
 
-            if (!app.switchSource(body["stream_id"].asString(), body["profile"].asString(), body["source_uri"].asString())) {
+            auto profile_opt = getStringField(body, {"profile", "profile_id"});
+            if (!profile_opt) {
+                return errorResponse("Missing required field: profile", 400);
+            }
+
+            auto uri_opt = getStringField(body, {"source_uri", "url"});
+            if (!uri_opt) {
+                return errorResponse("Missing required field: source_uri", 400);
+            }
+
+            if (!app.switchSource(*stream_opt, *profile_opt, *uri_opt)) {
                 return errorResponse(app.lastError().empty() ? "switch source failed" : app.lastError(), 400);
             }
 
@@ -582,14 +888,23 @@ struct RestServer::Impl {
     HttpResponse handleModelSwitch(const HttpRequest& req) {
         try {
             const Json::Value body = parseJson(req.body);
-            const auto required = {"stream_id", "profile", "model_id"};
-            for (const auto* key : required) {
-                if (!body.isMember(key) || !body[key].isString()) {
-                    return errorResponse(std::string("Missing required field: ") + key, 400);
-                }
+
+            auto stream_opt = getStringField(body, {"stream_id", "stream"});
+            if (!stream_opt) {
+                return errorResponse("Missing required field: stream_id", 400);
             }
 
-            if (!app.switchModel(body["stream_id"].asString(), body["profile"].asString(), body["model_id"].asString())) {
+            auto profile_opt = getStringField(body, {"profile", "profile_id"});
+            if (!profile_opt) {
+                return errorResponse("Missing required field: profile", 400);
+            }
+
+            auto model_opt = getStringField(body, {"model_id"});
+            if (!model_opt) {
+                return errorResponse("Missing required field: model_id", 400);
+            }
+
+            if (!app.switchModel(*stream_opt, *profile_opt, *model_opt)) {
                 return errorResponse(app.lastError().empty() ? "switch model failed" : app.lastError(), 400);
             }
 
@@ -603,14 +918,23 @@ struct RestServer::Impl {
     HttpResponse handleTaskSwitch(const HttpRequest& req) {
         try {
             const Json::Value body = parseJson(req.body);
-            const auto required = {"stream_id", "profile", "task"};
-            for (const auto* key : required) {
-                if (!body.isMember(key) || !body[key].isString()) {
-                    return errorResponse(std::string("Missing required field: ") + key, 400);
-                }
+
+            auto stream_opt = getStringField(body, {"stream_id", "stream"});
+            if (!stream_opt) {
+                return errorResponse("Missing required field: stream_id", 400);
             }
 
-            if (!app.switchTask(body["stream_id"].asString(), body["profile"].asString(), body["task"].asString())) {
+            auto profile_opt = getStringField(body, {"profile", "profile_id"});
+            if (!profile_opt) {
+                return errorResponse("Missing required field: profile", 400);
+            }
+
+            auto task_opt = getStringField(body, {"task", "task_id"});
+            if (!task_opt) {
+                return errorResponse("Missing required field: task", 400);
+            }
+
+            if (!app.switchTask(*stream_opt, *profile_opt, *task_opt)) {
                 return errorResponse(app.lastError().empty() ? "switch task failed" : app.lastError(), 400);
             }
 
@@ -624,15 +948,19 @@ struct RestServer::Impl {
     HttpResponse handleParamsUpdate(const HttpRequest& req) {
         try {
             const Json::Value body = parseJson(req.body);
-            const auto required = {"stream_id", "profile"};
-            for (const auto* key : required) {
-                if (!body.isMember(key) || !body[key].isString()) {
-                    return errorResponse(std::string("Missing required field: ") + key, 400);
-                }
+
+            auto stream_opt = getStringField(body, {"stream_id", "stream"});
+            if (!stream_opt) {
+                return errorResponse("Missing required field: stream_id", 400);
+            }
+
+            auto profile_opt = getStringField(body, {"profile", "profile_id"});
+            if (!profile_opt) {
+                return errorResponse("Missing required field: profile", 400);
             }
 
             auto params = buildParamsFromJson(body);
-            if (!app.updateParams(body["stream_id"].asString(), body["profile"].asString(), params)) {
+            if (!app.updateParams(*stream_opt, *profile_opt, params)) {
                 return errorResponse(app.lastError().empty() ? "update params failed" : app.lastError(), 400);
             }
 
