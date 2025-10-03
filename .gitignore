@@ -204,9 +204,17 @@ config/**/secrets.json
 config/**/*.key
 config/**/*.pem
 
-# Third party libraries (if not managed by package managers)
+# Third party / 外部依赖缓存
 third_party/*/
 !third_party/README.md
+ffmpeg-master-shared/
+ffmpeg-master-latest-win64-gpl-shared.zip
+Dependencies_x64_Release.zip
+tmp_avcodec_modules.txt
+deps_avcodec.txt
+
+# 临时工具与扫描结果
+tools/
 
 # Backup files
 *.bak
