@@ -21,7 +21,6 @@ private:
 
     void setupRoutes();
 
-    HTTPServer::Response notImplemented(const std::string& feature);
     HTTPServer::Response handleGetModels(const HTTPServer::Request& req);
     HTTPServer::Response handleGetProfiles(const HTTPServer::Request& req);
     HTTPServer::Response handleLoadModel(const HTTPServer::Request& req);

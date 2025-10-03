@@ -53,6 +53,7 @@ public:
                                                const std::string& source_uri,
                                                const std::optional<std::string>& model_override = std::nullopt);
     bool unsubscribeStream(const std::string& stream_id, const std::string& profile_name);
+    const std::string& lastError() const { return last_error_; }
 
 private:
     std::string config_dir_;
@@ -71,6 +72,7 @@ private:
     std::unordered_map<std::string, DetectionModelEntry> detection_model_index_;
     std::unordered_map<std::string, ProfileEntry> profile_index_;
     std::unordered_map<std::string, std::string> active_models_by_task_;
+    std::string last_error_;
 
     std::optional<DetectionModelEntry> resolveModel(const ProfileEntry& profile) const;
     std::optional<DetectionModelEntry> findModelById(const std::string& model_id) const;

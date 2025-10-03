@@ -13,6 +13,8 @@
 #include "media/source_switchable_rtsp.hpp"
 #include "media/transport_whip.hpp"
 
+#include <iostream>
+
 namespace va {
 
 va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
@@ -33,7 +35,11 @@ va::core::Factories buildFactories(va::core::EngineManager& engine_manager) {
         auto engine = engine_manager.currentEngine();
         const bool use_gpu = (!engine.provider.empty() && engine.provider.find("cuda") != std::string::npos) ||
                              (!engine.name.empty() && engine.name.find("cuda") != std::string::npos);
-        session->loadModel(model_path, use_gpu);
+        if (!session->loadModel(model_path, use_gpu)) {
+            std::cerr << "[Factories] failed to load model at " << model_path
+                      << " (gpu=" << std::boolalpha << use_gpu << std::noboolalpha << ")" << std::endl;
+            return std::shared_ptr<va::analyzer::Analyzer>{};
+        }
         analyzer->setSession(session);
 
         std::shared_ptr<va::analyzer::IPostprocessor> postprocessor;

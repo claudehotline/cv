@@ -140,50 +140,12 @@ void AnalysisAPI::setupRoutes() {
     });
 
     // Legacy endpoints return 501 to indicate pending implementation
-    http_server_->POST("/api/models/unload", [this](const HTTPServer::Request&) {
-        return notImplemented("models/unload");
-    });
-    http_server_->GET("/api/models/:id", [this](const HTTPServer::Request&) {
-        return notImplemented("models/:id");
-    });
-    http_server_->POST("/api/analysis/start", [this](const HTTPServer::Request&) {
-        return notImplemented("analysis/start");
-    });
-    http_server_->POST("/api/analysis/stop", [this](const HTTPServer::Request&) {
-        return notImplemented("analysis/stop");
-    });
-    http_server_->GET("/api/analysis/status", [this](const HTTPServer::Request&) {
-        return notImplemented("analysis/status");
-    });
-    http_server_->GET("/api/analysis/results", [this](const HTTPServer::Request&) {
-        return notImplemented("analysis/results");
-    });
-    http_server_->GET("/api/analysis/tasks", [this](const HTTPServer::Request&) {
-        return notImplemented("analysis/tasks");
-    });
-    http_server_->GET("/api/sources", [this](const HTTPServer::Request&) {
-        return notImplemented("sources");
-    });
-    http_server_->POST("/api/sources", [this](const HTTPServer::Request&) {
-        return notImplemented("sources:add");
-    });
-    http_server_->DELETE("/api/sources/:id", [this](const HTTPServer::Request&) {
-        return notImplemented("sources:remove");
-    });
     http_server_->GET("/api/system/info", [this](const HTTPServer::Request& req) {
         return handleSystemInfo(req);
     });
     http_server_->GET("/api/system/stats", [this](const HTTPServer::Request& req) {
         return handleSystemStats(req);
     });
-}
-
-HTTPServer::Response AnalysisAPI::notImplemented(const std::string& feature) {
-    Json::Value payload;
-    payload["success"] = false;
-    payload["error"] = feature + " not implemented";
-    payload["timestamp"] = static_cast<int64_t>(std::time(nullptr));
-    return HTTPServer::jsonResponse(payload, 501);
 }
 
 HTTPServer::Response AnalysisAPI::handleGetModels(const HTTPServer::Request&) {
@@ -245,7 +207,16 @@ HTTPServer::Response AnalysisAPI::handleLoadModel(const HTTPServer::Request& req
     }
 
     if (!app_->loadModel(model_id)) {
-        return HTTPServer::errorResponse("failed to activate model", 500);
+        const std::string reason = app_->lastError();
+        int status = 500;
+        if (!reason.empty()) {
+            if (reason.find("not found") != std::string::npos) {
+                status = 404;
+            } else {
+                status = 400;
+            }
+        }
+        return HTTPServer::errorResponse(reason.empty() ? "failed to activate model" : reason, status);
     }
 
     uint32_t active = 0;
@@ -287,7 +258,18 @@ HTTPServer::Response AnalysisAPI::handleSubscribe(const HTTPServer::Request& req
 
     auto key = app_->subscribeStream(stream, profile, uri, model_override);
     if (!key) {
-        return HTTPServer::errorResponse("subscribe failed", 500);
+        const std::string reason = app_->lastError();
+        int status = 500;
+        if (!reason.empty()) {
+            if (reason.find("not found") != std::string::npos) {
+                status = 404;
+            } else if (reason.find("failed") != std::string::npos) {
+                status = 500;
+            } else {
+                status = 400;
+            }
+        }
+        return HTTPServer::errorResponse(reason.empty() ? "subscribe failed" : reason, status);
     }
 
     Json::Value data;

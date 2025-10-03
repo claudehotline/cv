@@ -38,6 +38,8 @@ bool Application::initialize(const std::string& config_dir) {
         config_dir_ = ".";
     }
 
+    last_error_.clear();
+
     factories_ = va::buildFactories(engine_manager_);
     pipeline_builder_ = std::make_unique<va::core::PipelineBuilder>(factories_, engine_manager_);
     track_manager_ = std::make_unique<va::core::TrackManager>(*pipeline_builder_);
@@ -148,12 +150,14 @@ bool Application::ffmpegEnabled() const {
 bool Application::loadModel(const std::string& model_id) {
     auto model_opt = findModelById(model_id);
     if (!model_opt) {
+        last_error_ = "model not found";
         return false;
     }
 
     active_models_by_task_[model_opt->task] = model_opt->id;
 
     if (!track_manager_) {
+        last_error_.clear();
         return true;
     }
 
@@ -162,8 +166,12 @@ bool Application::loadModel(const std::string& model_id) {
         if (info.task == model_opt->task) {
             if (!track_manager_->switchModel(info.stream_id, info.profile_id, model_opt->id)) {
                 success = false;
+                last_error_ = "failed to switch running pipeline";
             }
         }
+    }
+    if (success) {
+        last_error_.clear();
     }
     return success;
 }
@@ -182,12 +190,14 @@ std::optional<std::string> Application::subscribeStream(const std::string& strea
                                                         const std::string& source_uri,
                                                         const std::optional<std::string>& model_override) {
     if (!initialized_ || !track_manager_) {
+        last_error_ = "application not initialized";
         return std::nullopt;
     }
 
     auto profile_it = profile_index_.find(profile_name);
     if (profile_it == profile_index_.end()) {
         std::cerr << "[Application] subscribeStream failed: profile not found " << profile_name << std::endl;
+        last_error_ = "profile not found";
         return std::nullopt;
     }
 
@@ -196,6 +206,7 @@ std::optional<std::string> Application::subscribeStream(const std::string& strea
         model_opt = findModelById(*model_override);
         if (!model_opt) {
             std::cerr << "[Application] subscribeStream failed: model override not found " << *model_override << std::endl;
+            last_error_ = "model not found";
             return std::nullopt;
         }
     } else {
@@ -208,6 +219,7 @@ std::optional<std::string> Application::subscribeStream(const std::string& strea
         }
         if (!model_opt) {
             std::cerr << "[Application] subscribeStream failed: no model resolved for task " << profile_it->second.task << std::endl;
+            last_error_ = "no model resolved for task";
             return std::nullopt;
         }
     }
@@ -226,8 +238,14 @@ std::optional<std::string> Application::subscribeStream(const std::string& strea
     if (key.empty()) {
         std::cerr << "[Application] subscribeStream failed: pipeline builder returned empty key for stream "
                   << stream_id << " profile " << profile_name << std::endl;
+        if (filter_cfg.model_path.empty()) {
+            last_error_ = "pipeline initialization failed";
+        } else {
+            last_error_ = "failed to initialize pipeline for model";
+        }
         return std::nullopt;
     }
+    last_error_.clear();
     return key;
 }
 
