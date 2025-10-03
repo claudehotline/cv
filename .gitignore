@@ -216,6 +216,21 @@ deps_avcodec.txt
 # 临时工具与扫描结果
 tools/
 
+# Python / scripts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+.venv*/
+.venv-*/
+.virtualenv/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+pip-wheel-metadata/
+
 # Backup files
 *.bak
 *.backup

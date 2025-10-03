@@ -1,10 +1,10 @@
 #pragma once
 
-#include <functional>
+#include <memory>
 #include <string>
 
-namespace va::core {
-class TrackManager;
+namespace va::app {
+class Application;
 }
 
 namespace va::server {
@@ -16,15 +16,17 @@ struct RestServerOptions {
 
 class RestServer {
 public:
-    RestServer(RestServerOptions options, va::core::TrackManager& track_manager);
+    RestServer(RestServerOptions options, va::app::Application& app);
+    ~RestServer();
 
     bool start();
     void stop();
 
 private:
+    struct Impl;
     RestServerOptions options_;
-    va::core::TrackManager& track_manager_;
-    bool running_ {false};
+    va::app::Application& app_;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace va::server

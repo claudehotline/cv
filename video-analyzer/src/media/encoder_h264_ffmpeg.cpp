@@ -1,5 +1,9 @@
 #include "media/encoder_h264_ffmpeg.hpp"
 
+#include <algorithm>
+#include <cctype>
+
+#include <opencv2/core.hpp>
 
 #ifdef USE_FFMPEG
 #include <stdexcept>
@@ -32,9 +36,30 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
 #ifdef USE_FFMPEG
     close();
 
+    std::string codec_name = settings.codec;
+    if (codec_name.empty()) {
+        codec_name = "h264";
+    }
+    std::string codec_lower = codec_name;
+    std::transform(codec_lower.begin(), codec_lower.end(), codec_lower.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+
+    if (codec_lower == "jpeg" || codec_lower == "jpg" || codec_lower == "mjpeg") {
+        use_jpeg_ = true;
+        width_ = settings.width;
+        height_ = settings.height;
+        fps_ = settings.fps;
+        pts_ = 0;
+        opened_ = true;
+        return true;
+    }
+
+    use_jpeg_ = false;
+
     const AVCodec* codec = nullptr;
     AVCodecID codec_id = AV_CODEC_ID_H264;
-    if (settings.codec == "h265" || settings.codec == "hevc") {
+    if (codec_lower == "h265" || codec_lower == "hevc") {
         codec_id = AV_CODEC_ID_H265;
         codec = avcodec_find_encoder_by_name("libx265");
         if (!codec) {
@@ -148,6 +173,11 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
 #else
     (void)settings;
     opened_ = true;
+    use_jpeg_ = true;
+    width_ = settings.width;
+    height_ = settings.height;
+    fps_ = settings.fps;
+    pts_ = 0;
     return true;
 #endif
 }
@@ -155,7 +185,27 @@ bool FfmpegH264Encoder::open(const Settings& settings) {
 bool FfmpegH264Encoder::encode(const core::Frame& frame, Packet& out_packet) {
 #ifdef USE_FFMPEG
     if (!opened_ || !codec_ctx_ || !frame_) {
-        return false;
+        if (!use_jpeg_) {
+            return false;
+        }
+    }
+
+    if (use_jpeg_) {
+        if (frame.bgr.empty() || frame.width <= 0 || frame.height <= 0) {
+            return false;
+        }
+
+        width_ = frame.width;
+        height_ = frame.height;
+
+        const cv::Mat image(height_, width_, CV_8UC3, const_cast<uint8_t*>(frame.bgr.data()));
+        std::vector<int> params{cv::IMWRITE_JPEG_QUALITY, jpeg_quality_};
+        if (!cv::imencode(".jpg", image, out_packet.data, params)) {
+            return false;
+        }
+        out_packet.keyframe = true;
+        out_packet.pts_ms = frame.pts_ms;
+        return true;
     }
 
     if (frame.width != width_ || frame.height != height_) {
@@ -193,7 +243,16 @@ bool FfmpegH264Encoder::encode(const core::Frame& frame, Packet& out_packet) {
     if (!opened_) {
         return false;
     }
-    out_packet.data.assign(frame.bgr.begin(), frame.bgr.end());
+    if (frame.bgr.empty() || frame.width <= 0 || frame.height <= 0) {
+        return false;
+    }
+    width_ = frame.width;
+    height_ = frame.height;
+    const cv::Mat image(height_, width_, CV_8UC3, const_cast<uint8_t*>(frame.bgr.data()));
+    std::vector<int> params{cv::IMWRITE_JPEG_QUALITY, jpeg_quality_};
+    if (!cv::imencode(".jpg", image, out_packet.data, params)) {
+        return false;
+    }
     out_packet.keyframe = true;
     out_packet.pts_ms = frame.pts_ms;
     return true;
@@ -218,11 +277,12 @@ void FfmpegH264Encoder::close() {
         sws_freeContext(sws_ctx_);
         sws_ctx_ = nullptr;
     }
+#endif
     width_ = 0;
     height_ = 0;
     fps_ = 0;
     pts_ = 0;
-#endif
+    use_jpeg_ = false;
     opened_ = false;
 }
 

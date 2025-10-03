@@ -22,6 +22,10 @@ void Analyzer::setRenderer(std::shared_ptr<IRenderer> renderer) {
     renderer_ = std::move(renderer);
 }
 
+void Analyzer::setUseGpuHint(bool value) {
+    use_gpu_hint_ = value;
+}
+
 bool Analyzer::analyze(const core::Frame& in, core::Frame& out) {
     if (!preprocessor_ || !session_ || !postprocessor_ || !renderer_) {
         return false;
@@ -56,7 +60,7 @@ bool Analyzer::switchModel(const std::string& model_id) {
     if (!session_) {
         return false;
     }
-    if (!session_->loadModel(model_id, false)) {
+    if (!session_->loadModel(model_id, use_gpu_hint_)) {
         return false;
     }
     return true;

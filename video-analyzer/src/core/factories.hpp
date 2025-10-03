@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <string>
@@ -30,6 +31,18 @@ struct FilterConfig {
     int input_height {0};
     float confidence_threshold {0.0f};
     float iou_threshold {0.0f};
+    std::string engine_type;
+    std::string engine_provider;
+    int device_index {0};
+    bool use_io_binding {false};
+    bool prefer_pinned_memory {true};
+    bool allow_cpu_fallback {true};
+    bool enable_profiling {false};
+    bool tensorrt_fp16 {false};
+    bool tensorrt_int8 {false};
+    int tensorrt_workspace_mb {0};
+    std::size_t io_binding_input_bytes {0};
+    std::size_t io_binding_output_bytes {0};
 };
 
 struct EncoderConfig {

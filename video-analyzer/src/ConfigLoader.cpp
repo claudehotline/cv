@@ -1,9 +1,10 @@
-#include "ConfigLoader.h"
+#include "ConfigLoader.hpp"
 
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 
 namespace {
@@ -21,6 +22,44 @@ YAML::Node loadYamlFile(const std::string& path) {
     } catch (const std::exception&) {
         return YAML::Node();
     }
+}
+
+size_t parseByteOption(const YAML::Node& node,
+                       const char* key_bytes,
+                       const char* key_mb,
+                       size_t fallback) {
+    if (!node || !node.IsMap()) {
+        return fallback;
+    }
+
+    const auto bytes_node = node[key_bytes];
+    if (bytes_node) {
+        try {
+            auto value = bytes_node.as<long long>(-1);
+            if (value >= 0) {
+                return static_cast<size_t>(value);
+            }
+        } catch (...) {
+            // ignore parse error, fall back
+        }
+    }
+
+    const auto mb_node = node[key_mb];
+    if (mb_node) {
+        try {
+            const double mb = mb_node.as<double>(0.0);
+            if (mb > 0.0) {
+                const auto bytes = static_cast<long long>(std::llround(mb * 1024.0 * 1024.0));
+                if (bytes > 0) {
+                    return static_cast<size_t>(bytes);
+                }
+            }
+        } catch (...) {
+            // ignore parse error, fall back
+        }
+    }
+
+    return fallback;
 }
 
 DetectionModelEntry parseModelVariant(const std::string& task,
@@ -148,12 +187,59 @@ AppConfigPayload parseAppConfig(const YAML::Node& v) {
         const auto& eng = engine_node;
         payload.engine.type = eng["type"].as<std::string>("ort-cpu");
         payload.engine.device = eng["device"].as<int>(0);
+
+        const auto options_node = eng["options"];
+        if (options_node && options_node.IsMap()) {
+            auto& opts = payload.engine.options;
+            opts.use_io_binding = options_node["use_io_binding"].as<bool>(opts.use_io_binding);
+            opts.prefer_pinned_memory = options_node["prefer_pinned_memory"].as<bool>(opts.prefer_pinned_memory);
+            opts.allow_cpu_fallback = options_node["allow_cpu_fallback"].as<bool>(opts.allow_cpu_fallback);
+            opts.enable_profiling = options_node["enable_profiling"].as<bool>(opts.enable_profiling);
+            opts.tensorrt_fp16 = options_node["trt_fp16"].as<bool>(opts.tensorrt_fp16);
+            opts.tensorrt_int8 = options_node["trt_int8"].as<bool>(opts.tensorrt_int8);
+            opts.tensorrt_workspace_mb = options_node["trt_workspace_mb"].as<int>(
+                options_node["trt_workspace"].as<int>(opts.tensorrt_workspace_mb));
+            opts.io_binding_input_bytes = parseByteOption(options_node, "io_binding_input_bytes", "io_binding_input_mb", opts.io_binding_input_bytes);
+            opts.io_binding_output_bytes = parseByteOption(options_node, "io_binding_output_bytes", "io_binding_output_mb", opts.io_binding_output_bytes);
+        }
     }
     const auto sfu_node = v["sfu"];
     if (sfu_node && sfu_node.IsMap()) {
         const auto& sfu = sfu_node;
         payload.sfu_whip_base = sfu["whip_base"].as<std::string>("");
         payload.sfu_whep_base = sfu["whep_base"].as<std::string>("");
+    }
+    const auto observability_node = v["observability"];
+    if (observability_node && observability_node.IsMap()) {
+        auto& obs = payload.observability;
+        obs.log_level = observability_node["log_level"].as<std::string>(obs.log_level);
+        obs.console = observability_node["console"].as<bool>(obs.console);
+
+        const auto file_node = observability_node["file"];
+        if (file_node) {
+            if (file_node.IsMap()) {
+                obs.file_path = file_node["path"].as<std::string>(obs.file_path);
+                obs.file_max_size_kb = file_node["max_size_kb"].as<int>(obs.file_max_size_kb);
+                obs.file_max_files = file_node["max_files"].as<int>(obs.file_max_files);
+            } else if (file_node.IsScalar()) {
+                obs.file_path = file_node.as<std::string>();
+            }
+        } else if (observability_node["file_path"]) {
+            obs.file_path = observability_node["file_path"].as<std::string>(obs.file_path);
+        }
+
+        const auto pipeline_node = observability_node["pipeline_metrics"];
+        if (pipeline_node && pipeline_node.IsMap()) {
+            obs.pipeline_metrics_enabled = pipeline_node["enabled"].as<bool>(obs.pipeline_metrics_enabled);
+            obs.pipeline_metrics_interval_ms = pipeline_node["interval_ms"].as<int>(obs.pipeline_metrics_interval_ms);
+        } else {
+            if (observability_node["pipeline_metrics_enabled"]) {
+                obs.pipeline_metrics_enabled = observability_node["pipeline_metrics_enabled"].as<bool>(obs.pipeline_metrics_enabled);
+            }
+            if (observability_node["pipeline_metrics_interval_ms"]) {
+                obs.pipeline_metrics_interval_ms = observability_node["pipeline_metrics_interval_ms"].as<int>(obs.pipeline_metrics_interval_ms);
+            }
+        }
     }
     return payload;
 }
@@ -238,3 +324,5 @@ std::map<std::string, AnalyzerParamsEntry> ConfigLoader::loadAnalyzerParams(cons
     }
     return params;
 }
+
+

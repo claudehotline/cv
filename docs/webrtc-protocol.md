@@ -1,286 +1,162 @@
-# WebRTC通信协议文档
+# Video Analyzer WebRTC 通信协议
 
-## 概述
+本文档描述当前 `video-analyzer` 后端内置的 WebRTC 信令及数据通道约定。服务端使用 libdatachannel 建立点对点连接，通过 DataChannel 发送经 JPEG 编码的分析帧。所有信令消息均通过 WebSocket（默认 `ws://<host>:8083`）交换，格式为 JSON。
 
-本文档描述了视频分析系统中 WebRTC 实时视频传输的通信协议。系统采用 WebSocket 进行信令交换，当前实现通过 WebRTC Data Channel 传输 JPEG 帧进行视频预览（不创建媒体 Track）。
+## 总体流程
 
-## 架构组成
+1. **WebSocket 连接**：客户端连接 `ws://host:8083`。
+2. **认证**：客户端发送 `auth` 消息，服务端返回 `auth_success`。
+3. **请求 Offer**：客户端发送 `request_offer`，指明想要观看的 `source_id`。
+4. **创建 Offer**：服务端生成 SDP `offer`，并通过信令返回。
+5. **Answer & ICE**：客户端发送 SDP `answer`，双方互换 `ice_candidate`。
+6. **DataChannel 建立**：命名为 `video` 的数据通道打开后，服务端按帧推送 JPEG 数据。
 
-- **视频分析模块**: WebRTC视频流推送端
-- **信令服务器**: 协调WebRTC连接建立
-- **Vue3前端**: WebRTC视频流接收端
+REST 控制面（例如 `/api/subscribe`）负责创建/销毁管线；WebRTC 信令只负责媒体传输协商。
 
-## 信令协议
+## 信令报文示例
 
-### 连接建立
+### 认证
 
-#### 1. 客户端认证
 ```json
 {
   "type": "auth",
   "data": {
     "client_type": "web_client",
-    "client_id": "web_1234567890"
+    "client_id": "web_1696400000"
   },
-  "timestamp": 1640995200000
+  "timestamp": 1700000000000
 }
 ```
 
-#### 2. 认证成功响应
+服务端响应：
+
 ```json
 {
   "type": "auth_success",
-  "client_id": "web_1234567890",
-  "message": "认证成功"
+  "client_id": "web_1696400000",
+  "message": "authentication ok"
 }
 ```
 
-### WebRTC信令交换
+### 请求 Offer
 
-#### 3. 请求视频流
 ```json
 {
   "type": "request_offer",
-  "timestamp": 1640995200000
+  "data": {
+    "source_id": "camera_01"
+  },
+  "timestamp": 1700000001000
 }
 ```
 
-#### 4. SDP Offer
+若未传 `source_id`，服务端使用该客户端最近一次设置的来源，或默认值。
+
+### 服务端 Offer
+
 ```json
 {
   "type": "offer",
-  "client_id": "web_1234567890",
+  "client_id": "web_1696400000",
   "data": {
     "type": "offer",
-    "sdp": "v=0\r\no=- 123456789 123456789 IN IP4 127.0.0.1\r\n..."
-  }
+    "sdp": "v=0\r\no=- 123456 2 IN IP4 127.0.0.1\r\n..."
+  },
+  "timestamp": 1700000001500
 }
 ```
 
-#### 5. SDP Answer
+### 客户端 Answer
+
 ```json
 {
   "type": "answer",
   "data": {
     "type": "answer",
-    "sdp": "v=0\r\no=- 987654321 987654321 IN IP4 127.0.0.1\r\n..."
+    "sdp": "v=0\r\no=- 987654 2 IN IP4 127.0.0.1\r\n..."
   },
-  "timestamp": 1640995200000
+  "timestamp": 1700000002000
 }
 ```
 
-#### 6. ICE Candidate
+### ICE Candidate
+
 ```json
 {
   "type": "ice_candidate",
   "data": {
-    "candidate": "candidate:1 1 UDP 2113667327 192.168.1.100 54400 typ host",
+    "candidate": "candidate:1 1 UDP 2122260223 192.168.1.10 52128 typ host",
     "sdpMid": "0",
     "sdpMLineIndex": 0
   },
-  "timestamp": 1640995200000
+  "timestamp": 1700000002500
 }
 ```
 
-## 控制消息
+客户端和服务端都会发送该消息。若信令失败，服务端可能返回：
 
-### 分析控制
-
-#### 开始分析
-```json
-{
-  "type": "start_analysis",
-  "data": {
-    "source_id": "camera_01",
-    "analysis_type": "object_detection"
-  },
-  "timestamp": 1640995200000
-}
-```
-
-#### 停止分析
-```json
-{
-  "type": "stop_analysis",
-  "data": {
-    "source_id": "camera_01"
-  },
-  "timestamp": 1640995200000
-}
-```
-
-### 分析结果
-
-#### 分析结果通知
-```json
-{
-  "type": "analysis_result",
-  "source_id": "camera_01",
-  "request_id": 12345,
-  "analysis_type": "object_detection",
-  "timestamp": 1640995200000,
-  "detections": [
-    {
-      "class_name": "person",
-      "confidence": 0.92,
-      "bbox": {
-        "x": 100,
-        "y": 150,
-        "width": 80,
-        "height": 200
-      }
-    }
-  ]
-}
-```
-
-## WebRTC配置
-
-### STUN服务器
-```json
-{
-  "stun_servers": [
-    "stun:stun.l.google.com:19302",
-    "stun:stun1.l.google.com:19302"
-  ]
-}
-```
-
-### 视频传输配置（当前实现）
-- 视频传输: DataChannel 传输 JPEG 帧（分块 16KB，首 4 字节为帧大小，大端序）
-- 媒体 Track: 不使用（ontrack 仅用于兼容日志）
-- 音频: 禁用
-- 帧率: 约 30 FPS
-
-## 端口分配
-
-| 服务 | 端口 | 协议 | 用途 |
-|------|------|------|------|
-| WebRTC 推流 | 8080 | UDP/TCP | P2P 连接（DataChannel） |
-| Analyzer HTTP API | 8082 | HTTP | 分析/模型 REST 接口 |
-| WebRTC 信令 | 8083 | WebSocket | 信令交换与控制消息 |
-| Web 前端 (Vite) | 30000 | HTTP | 开发服务器 |
-
-开发建议：前端在开发模式下通过 Vite 代理连接信令服务，使用路径 `/signaling`（Vite 已将其代理到 `ws://localhost:8083`）。前端应根据当前页面协议构造绝对 WS 地址，例如：
-
-```
-const wsScheme = location.protocol === 'https:' ? 'wss://' : 'ws://'
-const signalingUrl = `${wsScheme}${location.host}/signaling`
-```
-
-## 错误处理
-
-### 信令错误
 ```json
 {
   "type": "error",
   "error_code": "SIGNALING_ERROR",
-  "message": "信令交换失败",
-  "details": "ICE candidate添加失败"
+  "message": "invalid message format"
 }
 ```
 
-### WebRTC连接错误
-```json
-{
-  "type": "webrtc_error",
-  "error_code": "CONNECTION_FAILED",
-  "message": "WebRTC连接建立失败",
-  "client_id": "web_1234567890"
+## DataChannel 数据格式
+
+- 通道名称：`video`
+- 模式：可靠（Reliable）、有序（Ordered）
+- 每帧数据：
+  - 前 4 字节：无符号整型（大端序），表示后续 JPEG 数据长度
+  - 随后紧跟 JPEG 字节流
+
+示例解析伪代码：
+
+```javascript
+function onDataChannelMessage(event) {
+  const buffer = event.data; // ArrayBuffer
+  const view = new DataView(buffer);
+  const length = view.getUint32(0, false); // big-endian
+  const jpegBytes = new Uint8Array(buffer, 4, length);
+  const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
+  imgElement.src = URL.createObjectURL(blob);
 }
 ```
 
-## 连接状态管理
+若帧长度超过 16 KiB，服务端会先发送 4 字节帧长头，随后按照 16 KiB 分块、多次发送剩余数据，客户端应持续累积直至凑齐完整 JPEG。
 
-### 状态枚举
-- `connecting`: 正在建立连接
-- `connected`: 连接已建立
-- `disconnected`: 连接已断开
-- `failed`: 连接失败
+## 端口与服务
 
-### 状态通知
-```json
-{
-  "type": "connection_status",
-  "client_id": "web_1234567890",
-  "status": "connected",
-  "timestamp": 1640995200000
-}
-```
+| 服务                     | 默认端口 | 说明                              |
+|--------------------------|----------|-----------------------------------|
+| REST / Analysis API      | 8082     | `/api/subscribe`、`/api/system/*` |
+| WebSocket 信令 + DataChannel | 8083     | WebRTC 协商与 JPEG 帧传输          |
+| RTSP                    | 8554     | 外部推流示例端口（例如 MediaMTX） |
 
-## 性能监控
+## 与 REST 控制面的关系
 
-### 统计信息请求
-```json
-{
-  "type": "get_stats",
-  "client_id": "web_1234567890"
-}
-```
+- `/api/subscribe`：创建管线、打开 RTSP 源、启动推理与编码。
+- `/api/unsubscribe`：停止并移除管线。
+- `/api/pipelines`：查看当前活跃管线和统计数据。
 
-### 统计信息响应
-```json
-{
-  "type": "stats",
-  "client_id": "web_1234567890",
-  "data": {
-    "connected_clients": 3,
-    "frames_sent": 12345,
-    "avg_fps": 29.5,
-    "bytes_sent": 1048576,
-    "bitrate_kbps": 1850,
-    "packet_loss": 0.01
-  }
-}
-```
+WebRTC 信令组件只负责媒体传输协商，REST 接口负责生命周期管理。若客户端尚未通过 REST 订阅流，即使完成信令，DataChannel 也不会收到画面。
 
-## 安全考虑
+## 常见问题排查
 
-1. **认证**: 所有客户端必须通过认证才能建立WebRTC连接
-2. **HTTPS**: 生产环境建议使用HTTPS和WSS
-3. **TURN服务器**: 对于NAT穿透，可配置TURN服务器
-4. **访问控制**: 限制WebRTC连接的客户端数量
+1. **未收到 `auth_success`**：检查客户端是否发送了正确的 JSON，或服务端是否拒绝了连接。
+2. **收不到 Offer/Answer**：确认 `/api/subscribe` 已创建对应的管线，并查看服务端日志中是否有信令错误输出。
+3. **DataChannel 无数据**：
+   - 确认 RTSP 源正常，`VideoAnalyzer` 日志中能看到 “Analysis complete” 记录。
+   - 检查前端是否使用大端序解析了 4 字节帧长。
+   - 若网络存在 NAT/防火墙，考虑配置 STUN/TURN 或在局域网内联调。
+4. **WebSocket 断开**：服务端对异常报文会关闭连接；可在浏览器控制台或服务器日志中查看具体原因。
 
-## 故障排除
+## 未来计划
 
-### 常见问题
+- 可选的 STUN/TURN 配置支持。
+- 对 DataChannel 帧头添加校验字段，提高异常情况下的恢复能力。
+- 提供专门的 REST/WebRTC 协议测试脚本。
 
-1. **WebRTC连接失败**
-   - 检查防火墙UDP端口是否开放
-   - 验证STUN服务器可访问性
-   - 检查NAT配置
-
-2. **视频流不显示**
-   - 确认浏览器WebRTC支持
-   - 检查video元素配置
-   - 验证视频编解码器支持
-
-3. **信令连接失败**
-   - 检查WebSocket连接
-   - 验证信令服务器状态
-   - 确认端口8083可访问
-
-## 示例代码
-
-### 前端WebRTC连接
-```typescript
-const peerConnection = new RTCPeerConnection({
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' }
-  ]
-});
-
-peerConnection.ontrack = (event) => {
-  videoElement.srcObject = event.streams[0];
-};
-```
-
-### 后端WebRTC推流
-```cpp
-// 创建WebRTC会话
-auto peer_connection = peer_connection_factory_->CreatePeerConnection(
-    config, nullptr, nullptr, observer.get());
-
-// 添加视频轨道
-auto result = peer_connection->AddTrack(video_track_, {"stream_id"});
-```
+---
+若您在使用过程中发现协议与实现不一致，请在仓库 Issue 中反馈，或附带日志、报文示例以便快速修复。

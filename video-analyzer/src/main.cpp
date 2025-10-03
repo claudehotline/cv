@@ -1,6 +1,5 @@
-#include "AnalysisAPI.h"
-#include "SignalingServer.h"
 #include "app/application.hpp"
+#include "core/logger.hpp"
 
 #include <atomic>
 #include <csignal>
@@ -13,8 +12,7 @@ namespace {
 
 std::atomic<bool> g_running{true};
 
-void signalHandler(int signum) {
-    std::cout << "\nReceived signal " << signum << ", shutting down..." << std::endl;
+void signalHandler(int /*signum*/) {
     g_running = false;
 }
 
@@ -31,35 +29,22 @@ int main(int argc, char* argv[]) {
 
     va::app::Application app;
     if (!app.initialize(config_dir)) {
-        std::cerr << "Failed to initialize application" << std::endl;
+        VA_LOG_ERROR() << "Failed to initialize application";
         return 1;
     }
 
     if (!app.start()) {
-        std::cerr << "Failed to start application services" << std::endl;
+        VA_LOG_ERROR() << "Failed to start application services";
         return 1;
     }
 
-    AnalysisAPI api(&app);
-    if (!api.start(8082)) {
-        std::cerr << "Failed to start HTTP API" << std::endl;
-        return 1;
-    }
-
-    SignalingServer signaling;
-    if (!signaling.start(8083)) {
-        std::cerr << "Failed to start signaling server" << std::endl;
-        return 1;
-    }
-
-    std::cout << "Video analyzer running." << std::endl;
+    VA_LOG_INFO() << "Video analyzer running.";
 
     while (g_running.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
-    signaling.stop();
-    api.stop();
+    VA_LOG_INFO() << "Shutdown signal received, stopping services.";
     app.shutdown();
 
     return 0;

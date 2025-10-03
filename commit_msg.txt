@@ -1,0 +1,9 @@
+refactor: consolidate video-analyzer, add WebRTC DataChannel transport, remove legacy analysis/models, move configs under video-analyzer/config, unify headers (.hpp), update docs and root CMake; relocate test scripts and cleanup .gitignore
+
+- Add media/transport_webrtc_datachannel (ITransport impl)
+- Switch default encoder to JPEG for DataChannel path
+- Remove legacy analysis/ and models/ trees, cleanup headers
+- Move configs to video-analyzer/config; adjust loaders
+- Unify ConfigLoader to .hpp and fix includes
+- Update docs (README, webrtc-protocol); tidy .gitignore
+- Move scripts to video-analyzer/test/scripts

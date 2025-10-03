@@ -12,7 +12,7 @@ struct AnalyzerParams {
     float iou_threshold {0.45f};
 };
 
-class Analyzer {
+class Analyzer : public IFrameFilter {
 public:
     Analyzer();
 
@@ -20,8 +20,11 @@ public:
     void setSession(std::shared_ptr<IModelSession> session);
     void setPostprocessor(std::shared_ptr<IPostprocessor> postprocessor);
     void setRenderer(std::shared_ptr<IRenderer> renderer);
+    void setUseGpuHint(bool value);
 
     bool analyze(const core::Frame& in, core::Frame& out);
+
+    bool process(const core::Frame& in, core::Frame& out) override { return analyze(in, out); }
 
     bool switchModel(const std::string& model_id);
     bool switchTask(const std::string& task_id);
@@ -33,6 +36,7 @@ private:
     std::shared_ptr<IPostprocessor> postprocessor_;
     std::shared_ptr<IRenderer> renderer_;
     std::shared_ptr<AnalyzerParams> params_;
+    bool use_gpu_hint_ {false};
 };
 
 } // namespace va::analyzer

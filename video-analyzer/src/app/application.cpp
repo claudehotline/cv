@@ -1,9 +1,12 @@
 #include "app/application.hpp"
 
-#include "ConfigLoader.h"
+#include "ConfigLoader.hpp"
+#include "analyzer/analyzer.hpp"
+#include "core/logger.hpp"
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <filesystem>
 #include <iostream>
 #include <utility>
@@ -66,16 +69,33 @@ bool Application::initialize(const std::string& config_dir) {
     analyzer_params_ = ConfigLoader::loadAnalyzerParams(config_dir_);
     app_config_ = ConfigLoader::loadAppConfig(config_dir_);
 
+    va::core::Logger::instance().configure(app_config_.observability);
+
     va::core::EngineDescriptor descriptor;
     descriptor.name = app_config_.engine.type;
     descriptor.provider = app_config_.engine.type;
     descriptor.device_index = app_config_.engine.device;
+    descriptor.options["use_io_binding"] = app_config_.engine.options.use_io_binding ? "true" : "false";
+    descriptor.options["prefer_pinned_memory"] = app_config_.engine.options.prefer_pinned_memory ? "true" : "false";
+    descriptor.options["allow_cpu_fallback"] = app_config_.engine.options.allow_cpu_fallback ? "true" : "false";
+    descriptor.options["enable_profiling"] = app_config_.engine.options.enable_profiling ? "true" : "false";
+    descriptor.options["trt_fp16"] = app_config_.engine.options.tensorrt_fp16 ? "true" : "false";
+    descriptor.options["trt_int8"] = app_config_.engine.options.tensorrt_int8 ? "true" : "false";
+    if (app_config_.engine.options.tensorrt_workspace_mb > 0) {
+        descriptor.options["trt_workspace_mb"] = std::to_string(app_config_.engine.options.tensorrt_workspace_mb);
+    }
+    if (app_config_.engine.options.io_binding_input_bytes > 0) {
+        descriptor.options["io_binding_input_bytes"] = std::to_string(app_config_.engine.options.io_binding_input_bytes);
+    }
+    if (app_config_.engine.options.io_binding_output_bytes > 0) {
+        descriptor.options["io_binding_output_bytes"] = std::to_string(app_config_.engine.options.io_binding_output_bytes);
+    }
     engine_manager_.setEngine(std::move(descriptor));
 
     va::server::RestServerOptions rest_options;
     rest_options.host = "0.0.0.0";
     rest_options.port = 8082;
-    rest_server_ = std::make_unique<va::server::RestServer>(rest_options, *track_manager_);
+    rest_server_ = std::make_unique<va::server::RestServer>(rest_options, *this);
 
     initialized_ = true;
     return true;
@@ -196,7 +216,7 @@ std::optional<std::string> Application::subscribeStream(const std::string& strea
 
     auto profile_it = profile_index_.find(profile_name);
     if (profile_it == profile_index_.end()) {
-        std::cerr << "[Application] subscribeStream failed: profile not found " << profile_name << std::endl;
+        VA_LOG_WARN() << "[Application] subscribeStream failed: profile not found " << profile_name;
         last_error_ = "profile not found";
         return std::nullopt;
     }
@@ -205,7 +225,7 @@ std::optional<std::string> Application::subscribeStream(const std::string& strea
     if (model_override && !model_override->empty()) {
         model_opt = findModelById(*model_override);
         if (!model_opt) {
-            std::cerr << "[Application] subscribeStream failed: model override not found " << *model_override << std::endl;
+            VA_LOG_WARN() << "[Application] subscribeStream failed: model override not found " << *model_override;
             last_error_ = "model not found";
             return std::nullopt;
         }
@@ -218,7 +238,7 @@ std::optional<std::string> Application::subscribeStream(const std::string& strea
             model_opt = resolveModel(profile_it->second);
         }
         if (!model_opt) {
-            std::cerr << "[Application] subscribeStream failed: no model resolved for task " << profile_it->second.task << std::endl;
+            VA_LOG_WARN() << "[Application] subscribeStream failed: no model resolved for task " << profile_it->second.task;
             last_error_ = "no model resolved for task";
             return std::nullopt;
         }
@@ -236,7 +256,7 @@ std::optional<std::string> Application::subscribeStream(const std::string& strea
 
     auto key = track_manager_->subscribe(source_cfg, filter_cfg, encoder_cfg, transport_cfg);
     if (key.empty()) {
-        std::cerr << "[Application] subscribeStream failed: pipeline builder returned empty key for stream "
+        VA_LOG_WARN() << "[Application] subscribeStream failed: pipeline builder returned empty key for stream "
                   << stream_id << " profile " << profile_name << std::endl;
         if (filter_cfg.model_path.empty()) {
             last_error_ = "pipeline initialization failed";
@@ -254,6 +274,93 @@ bool Application::unsubscribeStream(const std::string& stream_id, const std::str
         return false;
     }
     track_manager_->unsubscribe(stream_id, profile_name);
+    return true;
+}
+
+bool Application::switchSource(const std::string& stream_id,
+                               const std::string& profile_name,
+                               const std::string& new_uri) {
+    if (!initialized_ || !track_manager_) {
+        last_error_ = "application not initialized";
+        return false;
+    }
+    if (!track_manager_->switchSource(stream_id, profile_name, new_uri)) {
+        last_error_ = "failed to switch source";
+        return false;
+    }
+    last_error_.clear();
+    return true;
+}
+
+bool Application::switchModel(const std::string& stream_id,
+                              const std::string& profile_name,
+                              const std::string& model_id) {
+    if (!initialized_ || !track_manager_) {
+        last_error_ = "application not initialized";
+        return false;
+    }
+
+    if (model_id.empty()) {
+        last_error_ = "model id is empty";
+        return false;
+    }
+
+    auto model_opt = findModelById(model_id);
+    if (!model_opt) {
+        last_error_ = "model not found";
+        return false;
+    }
+
+    if (!track_manager_->switchModel(stream_id, profile_name, model_opt->id)) {
+        last_error_ = "failed to switch model";
+        return false;
+    }
+
+    last_error_.clear();
+    return true;
+}
+
+bool Application::switchTask(const std::string& stream_id,
+                             const std::string& profile_name,
+                             const std::string& task_id) {
+    if (!initialized_ || !track_manager_) {
+        last_error_ = "application not initialized";
+        return false;
+    }
+
+    if (!track_manager_->switchTask(stream_id, profile_name, task_id)) {
+        last_error_ = "failed to switch task";
+        return false;
+    }
+
+    last_error_.clear();
+    return true;
+}
+
+bool Application::updateParams(const std::string& stream_id,
+                               const std::string& profile_name,
+                               const va::analyzer::AnalyzerParams& params) {
+    if (!initialized_ || !track_manager_) {
+        last_error_ = "application not initialized";
+        return false;
+    }
+
+    auto shared_params = std::make_shared<va::analyzer::AnalyzerParams>(params);
+    if (!track_manager_->setParams(stream_id, profile_name, std::move(shared_params))) {
+        last_error_ = "failed to update analyzer params";
+        return false;
+    }
+
+    last_error_.clear();
+    return true;
+}
+
+bool Application::setEngine(const va::core::EngineDescriptor& descriptor) {
+    if (!engine_manager_.setEngine(descriptor)) {
+        last_error_ = "failed to set engine";
+        return false;
+    }
+    last_error_.clear();
     return true;
 }
 
@@ -333,6 +440,64 @@ va::core::FilterConfig Application::buildFilterConfig(const std::string& stream_
     cfg.confidence_threshold = model.conf > 0.0f ? model.conf : params.conf;
     cfg.iou_threshold = model.iou > 0.0f ? model.iou : params.iou;
 
+    auto engine = engine_manager_.currentEngine();
+    cfg.engine_type = engine.name;
+    cfg.engine_provider = engine.provider;
+    cfg.device_index = engine.device_index;
+
+    auto toLower = [](std::string value) {
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return value;
+    };
+
+    auto getBoolOption = [&](const std::string& key, bool fallback) {
+        auto it = engine.options.find(key);
+        if (it == engine.options.end()) {
+            return fallback;
+        }
+        std::string value = it->second;
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (value == "1" || value == "true" || value == "yes" || value == "on") return true;
+        if (value == "0" || value == "false" || value == "no" || value == "off") return false;
+        return fallback;
+    };
+
+    auto getIntOption = [&](const std::string& key, int fallback) {
+        auto it = engine.options.find(key);
+        if (it == engine.options.end()) {
+            return fallback;
+        }
+        try {
+            return std::stoi(it->second);
+        } catch (...) {
+            return fallback;
+        }
+    };
+
+    auto getSizeOption = [&](const std::string& key, std::size_t fallback) {
+        auto it = engine.options.find(key);
+        if (it == engine.options.end()) {
+            return fallback;
+        }
+        try {
+            long long v = std::stoll(it->second);
+            if (v < 0) return fallback;
+            return static_cast<std::size_t>(v);
+        } catch (...) {
+            return fallback;
+        }
+    };
+
+    cfg.use_io_binding = getBoolOption("use_io_binding", cfg.use_io_binding);
+    cfg.prefer_pinned_memory = getBoolOption("prefer_pinned_memory", cfg.prefer_pinned_memory);
+    cfg.allow_cpu_fallback = getBoolOption("allow_cpu_fallback", cfg.allow_cpu_fallback);
+    cfg.enable_profiling = getBoolOption("enable_profiling", cfg.enable_profiling);
+    cfg.tensorrt_fp16 = getBoolOption("trt_fp16", cfg.tensorrt_fp16);
+    cfg.tensorrt_int8 = getBoolOption("trt_int8", cfg.tensorrt_int8);
+    cfg.tensorrt_workspace_mb = getIntOption("trt_workspace_mb", cfg.tensorrt_workspace_mb);
+    cfg.io_binding_input_bytes = getSizeOption("io_binding_input_bytes", cfg.io_binding_input_bytes);
+    cfg.io_binding_output_bytes = getSizeOption("io_binding_output_bytes", cfg.io_binding_output_bytes);
+
     if (cfg.input_width == 0) {
         cfg.input_width = 640;
     }
@@ -355,7 +520,11 @@ va::core::EncoderConfig Application::buildEncoderConfig(const ProfileEntry& prof
     cfg.preset = profile.enc_preset;
     cfg.tune = profile.enc_tune;
     cfg.profile = profile.enc_profile;
-    cfg.codec = profile.enc_codec.empty() ? "h264" : profile.enc_codec;
+    std::string codec = profile.enc_codec;
+    if (codec.empty()) {
+        codec = "jpeg";
+    }
+    cfg.codec = codec;
     cfg.zero_latency = profile.enc_zero_latency;
     return cfg;
 }
@@ -385,3 +554,5 @@ std::string Application::expandTemplate(const std::string& templ,
 }
 
 } // namespace va::app
+
+

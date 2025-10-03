@@ -5,7 +5,7 @@
 #include "media/source.hpp"
 #include "media/transport.hpp"
 
-#include <iostream>
+#include "core/logger.hpp"
 
 namespace va::core {
 
@@ -22,19 +22,19 @@ std::shared_ptr<Pipeline> PipelineBuilder::build(const SourceConfig& source_cfg,
     auto transport = factories_.make_transport ? factories_.make_transport(transport_cfg) : nullptr;
 
     if (!source) {
-        std::cerr << "[PipelineBuilder] failed to create source for URI " << source_cfg.uri << std::endl;
+        VA_LOG_ERROR() << "[PipelineBuilder] failed to create source for URI " << source_cfg.uri;
         return nullptr;
     }
     if (!analyzer) {
-        std::cerr << "[PipelineBuilder] failed to create analyzer for model " << filter_cfg.model_id << std::endl;
+        VA_LOG_ERROR() << "[PipelineBuilder] failed to create analyzer for model " << filter_cfg.model_id;
         return nullptr;
     }
     if (!encoder) {
-        std::cerr << "[PipelineBuilder] failed to create encoder for stream " << source_cfg.stream_id << std::endl;
+        VA_LOG_ERROR() << "[PipelineBuilder] failed to create encoder for stream " << source_cfg.stream_id;
         return nullptr;
     }
     if (!transport) {
-        std::cerr << "[PipelineBuilder] failed to create transport for stream " << source_cfg.stream_id << std::endl;
+        VA_LOG_ERROR() << "[PipelineBuilder] failed to create transport for stream " << source_cfg.stream_id;
         return nullptr;
     }
 
@@ -54,14 +54,15 @@ std::shared_ptr<Pipeline> PipelineBuilder::build(const SourceConfig& source_cfg,
     encoder_settings.codec = encoder_cfg.codec;
 
     if (!encoder->open(encoder_settings)) {
-        std::cerr << "[PipelineBuilder] encoder open failed for stream " << source_cfg.stream_id
-                  << " (" << encoder_settings.width << "x" << encoder_settings.height << "@" << encoder_settings.fps
-                  << ", codec=" << encoder_settings.codec << ")" << std::endl;
+        VA_LOG_ERROR() << "[PipelineBuilder] encoder open failed for stream " << source_cfg.stream_id
+                       << " (" << encoder_settings.width << "x" << encoder_settings.height << "@" << encoder_settings.fps
+                       << ", codec=" << encoder_settings.codec << ")";
         return nullptr;
     }
 
-    if (!transport_cfg.whip_url.empty() && !transport->connect(transport_cfg.whip_url)) {
-        std::cerr << "[PipelineBuilder] transport connect failed for URL " << transport_cfg.whip_url << std::endl;
+    const std::string endpoint = transport_cfg.whip_url.empty() ? std::string() : transport_cfg.whip_url;
+    if (!transport->connect(endpoint)) {
+        VA_LOG_ERROR() << "[PipelineBuilder] transport connect failed";
         return nullptr;
     }
 

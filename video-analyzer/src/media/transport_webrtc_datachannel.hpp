@@ -2,13 +2,16 @@
 
 #include "media/transport.hpp"
 
+#include <memory>
+#include <mutex>
 #include <string>
 
 namespace va::media {
 
-class WhipTransport : public ITransport {
+class WebRTCDataChannelTransport : public ITransport {
 public:
-    WhipTransport();
+    WebRTCDataChannelTransport();
+    ~WebRTCDataChannelTransport() override;
 
     bool connect(const std::string& endpoint) override;
     bool send(const std::string& track_id, const uint8_t* data, size_t size) override;
@@ -16,9 +19,9 @@ public:
     Stats stats() const override;
 
 private:
-    std::string endpoint_;
-    bool connected_ {false};
-    Stats stats_;
+    struct Impl;
+    std::shared_ptr<Impl> impl_;
 };
 
 } // namespace va::media
+

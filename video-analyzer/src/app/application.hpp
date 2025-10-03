@@ -5,7 +5,7 @@
 #include "core/pipeline_builder.hpp"
 #include "core/track_manager.hpp"
 #include "server/rest.hpp"
-#include "ConfigLoader.h"
+#include "ConfigLoader.hpp"
 
 #include <map>
 #include <memory>
@@ -13,6 +13,10 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+namespace va::analyzer {
+struct AnalyzerParams;
+}
 
 namespace va::app {
 
@@ -53,6 +57,19 @@ public:
                                                const std::string& source_uri,
                                                const std::optional<std::string>& model_override = std::nullopt);
     bool unsubscribeStream(const std::string& stream_id, const std::string& profile_name);
+    bool switchSource(const std::string& stream_id,
+                      const std::string& profile_name,
+                      const std::string& new_uri);
+    bool switchModel(const std::string& stream_id,
+                     const std::string& profile_name,
+                     const std::string& model_id);
+    bool switchTask(const std::string& stream_id,
+                    const std::string& profile_name,
+                    const std::string& task_id);
+    bool updateParams(const std::string& stream_id,
+                      const std::string& profile_name,
+                      const va::analyzer::AnalyzerParams& params);
+    bool setEngine(const va::core::EngineDescriptor& descriptor);
     const std::string& lastError() const { return last_error_; }
 
 private:
@@ -91,3 +108,4 @@ private:
 };
 
 } // namespace va::app
+

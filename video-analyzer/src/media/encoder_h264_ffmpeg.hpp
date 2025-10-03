@@ -2,6 +2,8 @@
 
 #include "media/encoder.hpp"
 
+#include <string>
+
 #ifdef USE_FFMPEG
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -10,6 +12,8 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 #endif
+
+#include <opencv2/imgcodecs.hpp>
 
 namespace va::media {
 
@@ -24,15 +28,17 @@ public:
 
 private:
     bool opened_ {false};
+    int width_ {0};
+    int height_ {0};
+    int fps_ {0};
+    int64_t pts_ {0};
+    bool use_jpeg_ {false};
+    int jpeg_quality_ {80};
 #ifdef USE_FFMPEG
     AVCodecContext* codec_ctx_ {nullptr};
     AVFrame* frame_ {nullptr};
     AVPacket* packet_ {nullptr};
     SwsContext* sws_ctx_ {nullptr};
-    int width_ {0};
-    int height_ {0};
-    int fps_ {0};
-    int64_t pts_ {0};
 #endif
 };
 

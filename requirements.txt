@@ -1,7 +1,0 @@
-onnxruntime==1.16.3
-opencv-python
-numpy
-pyyaml
-flask
-requests
-pillow
